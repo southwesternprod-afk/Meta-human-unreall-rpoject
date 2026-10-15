@@ -715,9 +715,11 @@ def jerkin_layers(c):
     hammer = g.remap(g.voronoi(c.P, 70.0), 0.0, 0.55)
     tone_s = g.remap(g.noise(c.P, 30.0, 4.0), 0.4, 0.65)
     # fleur-de-lis on the pauldron caps, placed in the plate's own (phi, alpha) coordinates
+    # pc = (phi * r, alpha * r) on the plates; the cap (r ~ 0.145 m) faces outwards
+    # around alpha 38 deg, so the crest is centred there with its tip towards the neck.
     crest_uv = g.node("ShaderNodeCombineXYZ", {
-        "X": g.math("ADD", g.math("DIVIDE", pc["X"], 0.075), 0.5),
-        "Y": g.math("DIVIDE", g.math("SUBTRACT", pc["Y"], 0.004), 0.075)}).outputs["Vector"]
+        "X": g.math("ADD", g.math("DIVIDE", pc["X"], 0.07), 0.5),
+        "Y": g.math("DIVIDE", g.math("SUBTRACT", 0.131, pc["Y"]), 0.07)}).outputs["Vector"]
     crest_img = bpy.data.images.load(str(CREST), check_existing=True)
     crest_img.colorspace_settings.name = "Non-Color"
     crest = g.math("MULTIPLY", g.image(crest_img, crest_uv, "CLIP").outputs["Color"], c.is_part(STEEL))
