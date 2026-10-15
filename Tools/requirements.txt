@@ -1,0 +1,12 @@
+# Python packages for the Blender asset pipeline in Tools/Blender (Python 3.13).
+# pip install -r Tools/requirements.txt
+# pymeshlab also needs the system library libopengl0 (apt install libopengl0).
+bpy==5.2.2
+numpy==2.5.3
+pillow==12.3.0
+scipy==1.18.1
+libigl==2.6.3
+trimesh==5.1.1
+xatlas==0.0.11
+pymeshlab==2025.7.post1
+opencv-python-headless==5.0.0.93
