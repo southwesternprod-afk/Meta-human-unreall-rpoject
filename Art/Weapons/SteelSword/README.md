@@ -2,11 +2,15 @@
 
 Procedural steel longsword built by `Tools/Blender/build_steel_sword.py` (Blender 5.2).
 
+Details: fullered blade with a flat ricasso and a secondary cutting bevel,
+curved crossguard with a centre block and langets, leather-wrapped grip over
+three risers, grooved ferrules, recessed wheel pommel with a domed peen.
+
 | | |
 |---|---|
 | Length | 104 cm (80 cm blade, 17 cm grip) |
 | Guard span | 20 cm |
-| Mesh | ~8.2k verts, one UV channel |
+| Mesh | ~10.4k verts, one UV channel |
 | Materials | `M_SwordBlade_Steel`, `M_SwordFittings_Steel`, `M_SwordGrip_Leather` |
 | Collision | `UCX_SM_SteelSword_00..02` (blade, guard, handle) |
 | Sockets | `SOCKET_BladeBase`, `SOCKET_BladeTip` (for trails / hit traces) |

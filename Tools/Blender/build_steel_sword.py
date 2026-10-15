@@ -40,6 +40,7 @@ BLADE_T0 = 0.0075            # thickness at the root
 BLADE_T1 = 0.0045            # thickness near the tip
 FULLER_DEPTH = 0.0016
 FULLER_END = 0.68            # fraction of blade length where the fuller ends
+RICASSO_END = 0.055          # fraction of blade length left flat and unsharpened
 POMMEL_Z = -0.115
 
 
@@ -53,8 +54,11 @@ def smoothstep(t):
 
 
 # --- Mesh helpers -----------------------------------------------------------
-def loft(name, rings, cap_start=True, cap_end=True, tip=None):
-    """Skin a list of equal-length vertex rings into a closed mesh object."""
+def loft(name, rings, cap_start=True, cap_end=True, tip=None, sharp_cols=()):
+    """Skin a list of equal-length vertex rings into a closed mesh object.
+
+    sharp_cols: ring indices whose lengthwise edges get a hard crease.
+    """
     bm = bmesh.new()
     vrings = [[bm.verts.new(p) for p in ring] for ring in rings]
     n = len(rings[0])
@@ -62,6 +66,8 @@ def loft(name, rings, cap_start=True, cap_end=True, tip=None):
         for j in range(n):
             k = (j + 1) % n
             bm.faces.new((a[j], a[k], b[k], b[j]))
+        for j in sharp_cols:
+            bm.edges.get((a[j], b[j])).smooth = False
     if cap_start:
         bm.faces.new(list(reversed(vrings[0])))
     if tip is not None:
@@ -105,28 +111,47 @@ def make_material(name, color, metallic, roughness):
 
 
 # --- Parts ------------------------------------------------------------------
-def blade_section(w, t, fuller):
-    """Lenticular cross-section with a rounded fuller groove on both flats."""
-    half = w / 2
-    fe = 0.135  # fuller half-width as a fraction of blade width
-    xs = [0.5, 0.46, 0.40, 0.33, 0.26, 0.19, fe, 0.10, 0.05, 0.0]
+BEVEL = 0.44   # where the cutting bevel starts, as a fraction of blade width
+FULLER_HALF = 0.135
+BLADE_XS = [0.5, 0.47, BEVEL, 0.40, 0.34, 0.28, 0.22, 0.18, FULLER_HALF, 0.10, 0.05, 0.0]
+
+
+def blade_section(w, t, fuller, ricasso):
+    """Blade cross-section: a lens-shaped main grind, a steeper cutting bevel
+    at each edge and a rounded fuller groove. `ricasso` (0..1) blends towards
+    the flat-sided, unsharpened section next to the guard."""
     top = []
-    for xf in xs + [-x for x in reversed(xs[:-1])]:
-        base = 0.5 * t * (1 - abs(xf) / 0.5) ** 0.6
-        groove = 0.0
-        if abs(xf) < fe:
-            groove = fuller * math.cos(math.pi * abs(xf) / (2 * fe))
-        top.append((xf * w, base - groove))
+    for xf in BLADE_XS + [-x for x in reversed(BLADE_XS[:-1])]:
+        a = abs(xf)
+        if a <= BEVEL:
+            lens = 0.5 * t * (0.30 + 0.70 * (1 - (a / BEVEL) ** 1.8))
+        else:
+            lens = 0.5 * t * 0.30 * (0.5 - a) / (0.5 - BEVEL)
+        flat = 0.5 * t if a <= BEVEL else 0.5 * t * (0.5 - a) / (0.5 - BEVEL)
+        y = lerp(lens, flat, ricasso)
+        if a < FULLER_HALF:
+            y -= fuller * math.cos(math.pi * a / (2 * FULLER_HALF))
+        top.append((xf * w, y))
     # top runs +x edge -> -x edge; bottom mirrors it back (edges shared)
     bottom = [(x, -y) for x, y in reversed(top[1:-1])]
-    return [(x, y) for x, y in top + bottom] if half else []
+    return top + bottom
+
+
+def blade_sharp_cols():
+    top = BLADE_XS + [-x for x in reversed(BLADE_XS[:-1])]
+    n_top = len(top)
+    cols = [i for i, xf in enumerate(top) if abs(xf) in (BEVEL, FULLER_HALF)]
+    # bottom side is the top side mirrored, skipping the two shared edge verts
+    cols += [n_top + (n_top - 2 - i) for i in cols]
+    return cols
 
 
 def build_blade():
     rings = []
     straight = 0.78
     steps_body, steps_tip = 64, 26
-    zs = [i / steps_body * straight for i in range(steps_body + 1)]
+    zs = sorted(set([i / steps_body * straight for i in range(steps_body + 1)]
+                    + [RICASSO_END + (i - 6) * 0.004 for i in range(14)]))
     zs += [straight + (1 - straight) * (i / steps_tip) ** 0.85 * 0.985
            for i in range(1, steps_tip + 1)]
     for s in zs:
@@ -139,11 +164,12 @@ def build_blade():
             w = BLADE_W1 * shape
             t = BLADE_T1 * (0.25 + 0.75 * shape)
         fuller = FULLER_DEPTH * (1 - smoothstep((s - (FULLER_END - 0.06)) / 0.06))
-        fuller *= smoothstep(s / 0.02 + 0.5)        # ease in at the root
+        fuller *= smoothstep((s - RICASSO_END) / 0.035)   # fuller starts past the ricasso
+        ricasso = 1 - smoothstep((s - RICASSO_END) / 0.012)
         z = BLADE_START + s * BLADE_LEN
-        rings.append([Vector((x, y, z)) for x, y in blade_section(w, t, fuller)])
+        rings.append([Vector((x, y, z)) for x, y in blade_section(w, t, fuller, ricasso)])
     tip = Vector((0, 0, BLADE_START + BLADE_LEN))
-    return loft("Blade", rings, cap_start=True, tip=tip)
+    return loft("Blade", rings, cap_start=True, tip=tip, sharp_cols=blade_sharp_cols())
 
 
 OCTAGON = [(1, 0.45), (0.45, 1), (-0.45, 1), (-1, 0.45),
@@ -169,6 +195,34 @@ def build_guard():
     return loft("Guard", rings)
 
 
+def build_guard_block():
+    """Raised centre block (escutcheon) where the blade passes through the guard."""
+    hx, hy, hz, c = 0.017, 0.0148, 0.0118, 0.004
+    section = [(hx, hy - c), (hx - c, hy), (-hx + c, hy), (-hx, hy - c),
+               (-hx, -hy + c), (-hx + c, -hy), (hx - c, -hy), (hx, -hy + c)]
+    rings = []
+    for z, k in ((-hz, 0.6), (-hz + c, 1.0), (hz - c, 1.0), (hz, 0.6)):
+        rings.append([Vector((x * k, y * k, GUARD_Z + z)) for x, y in section])
+    return loft("GuardBlock", rings)
+
+
+def build_langet(side):
+    """Tapered tab that runs up the blade's flat from the guard (one per face)."""
+    y0 = side * (BLADE_T0 / 2 - 0.0003)
+    rings = []
+    z0, length = GUARD_Z + 0.010, 0.032
+    steps = 8
+    for i in range(steps + 1):
+        u = i / steps
+        hw = lerp(0.0085, 0.0028, u)
+        th = lerp(0.0022, 0.0012, u)
+        y1 = y0 + side * th
+        sect = [(hw, y0), (hw * 0.75, y1), (-hw * 0.75, y1), (-hw, y0)]
+        rings.append([Vector((x, y, z0 + u * length)) for x, y in sect])
+    tip = Vector((0, y0 + side * 0.0006, z0 + length + 0.006))
+    return loft(f"Langet{'F' if side > 0 else 'B'}", rings, tip=tip)
+
+
 def build_grip():
     rings = []
     seg, steps = 32, 120
@@ -181,15 +235,21 @@ def build_grip():
         for j in range(seg):
             a = 2 * math.pi * j / seg
             wrap = max(0.0, math.cos(2 * math.pi * z / pitch + a)) ** 10
-            r = swell * (1 - 0.055 * wrap)             # spiral leather wrap groove
+            risers = sum(math.exp(-((s - c) / 0.022) ** 2) for c in (0.25, 0.5, 0.75))
+            r = swell * (1 + 0.055 * risers) * (1 - 0.055 * wrap)   # risers under a spiral wrap
             ring.append(Vector((0.0155 * r * math.cos(a), 0.0125 * r * math.sin(a), z)))
         rings.append(ring)
     return loft("Grip", rings)
 
 
-def build_ring(name, z0, z1, rx, ry, seg=32, bevel=0.0012):
+def build_ring(name, z0, z1, rx, ry, seg=32, bevel=0.0012, groove=0.0):
     rings = []
-    for z, k in ((z0, -bevel), (z0 + bevel, 0), (z1 - bevel, 0), (z1, -bevel)):
+    zm = (z0 + z1) / 2
+    profile = [(z0, -bevel), (z0 + bevel, 0)]
+    if groove:
+        profile += [(zm - 0.0012, 0), (zm - 0.0005, -groove), (zm + 0.0005, -groove), (zm + 0.0012, 0)]
+    profile += [(z1 - bevel, 0), (z1, -bevel)]
+    for z, k in profile:
         rings.append([Vector(((rx + k) * math.cos(2 * math.pi * j / seg),
                               (ry + k) * math.sin(2 * math.pi * j / seg), z))
                       for j in range(seg)])
@@ -198,10 +258,12 @@ def build_ring(name, z0, z1, rx, ry, seg=32, bevel=0.0012):
 
 def build_pommel():
     # Wheel pommel: a bevelled disc whose axis runs along Y.
-    profile = [(-0.0110, 0.012), (-0.0106, 0.0185), (-0.0092, 0.0228),
-               (-0.0065, 0.0250), (0.0065, 0.0250), (0.0092, 0.0228),
-               (0.0106, 0.0185), (0.0110, 0.012)]
-    seg = 40
+    # Each face has a recessed field with a raised central boss.
+    half = [(-0.0124, 0.0030), (-0.0122, 0.0058), (-0.0114, 0.0080),
+            (-0.0090, 0.0092), (-0.0088, 0.0138), (-0.0106, 0.0160),
+            (-0.0112, 0.0186), (-0.0096, 0.0228), (-0.0066, 0.0250)]
+    profile = half + [(-y, r) for y, r in reversed(half)]
+    seg = 48
     rings = [[Vector((r * math.cos(2 * math.pi * j / seg), y,
                       POMMEL_Z + r * math.sin(2 * math.pi * j / seg)))
               for j in range(seg)] for y, r in profile]
@@ -210,7 +272,12 @@ def build_pommel():
 
 def build_peen():
     z_top = POMMEL_Z - 0.0245
-    return build_ring("Peen", z_top - 0.006, z_top, 0.0055, 0.0055, seg=16, bevel=0.0015)
+    seg = 20
+    profile = [(z_top, 0.0058), (z_top - 0.0030, 0.0058), (z_top - 0.0046, 0.0050),
+               (z_top - 0.0058, 0.0034)]
+    rings = [[Vector((r * math.cos(2 * math.pi * j / seg), r * math.sin(2 * math.pi * j / seg), z))
+              for j in range(seg)] for z, r in profile]
+    return loft("Peen", rings, tip=Vector((0, 0, z_top - 0.0064)))
 
 
 # --- Assembly ---------------------------------------------------------------
@@ -259,9 +326,12 @@ def build_sword():
     parts = [
         (build_blade(), steel),
         (build_guard(), fittings),
+        (build_guard_block(), fittings),
+        (build_langet(1), fittings),
+        (build_langet(-1), fittings),
         (build_grip(), leather),
-        (build_ring("FerruleTop", GRIP_HALF - 0.004, GRIP_HALF + 0.006, 0.0172, 0.0142), fittings),
-        (build_ring("FerruleBottom", -GRIP_HALF - 0.006, -GRIP_HALF + 0.004, 0.0172, 0.0142), fittings),
+        (build_ring("FerruleTop", GRIP_HALF - 0.004, GRIP_HALF + 0.006, 0.0172, 0.0142, groove=0.0006), fittings),
+        (build_ring("FerruleBottom", -GRIP_HALF - 0.006, -GRIP_HALF + 0.004, 0.0172, 0.0142, groove=0.0006), fittings),
         (build_pommel(), fittings),
         (build_peen(), fittings),
     ]
@@ -422,6 +492,8 @@ def render_previews(sword):
     hilt = sword.matrix_world @ Vector((0, 0, -0.01))
     render_view(renders / "SteelSword_Hero.png", Vector((0.15, -1.05, 0.95)), blade_mid - Vector((0.08, 0, 0)), 42)
     render_view(renders / "SteelSword_Hilt.png", hilt + Vector((0.12, -0.32, 0.22)), hilt + Vector((0.0, 0.0, 0.0)), 70)
+    guard = sword.matrix_world @ Vector((0, 0, 0.12))
+    render_view(renders / "SteelSword_Guard.png", guard + Vector((-0.20, -0.22, 0.20)), guard, 70)
 
 
 if __name__ == "__main__":
