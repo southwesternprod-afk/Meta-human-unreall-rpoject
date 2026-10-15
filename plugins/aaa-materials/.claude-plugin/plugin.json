@@ -1,0 +1,7 @@
+{
+  "name": "aaa-materials",
+  "version": "1.0.0",
+  "description": "AAA PBR textures and materials with headless Blender: smart-material presets with wear and dirt, asset and seamless tileable bakes, a PBR validator, material-ball renders and Unreal master material / material instance generation.",
+  "author": { "name": "southwesternprod-afk" },
+  "keywords": ["pbr", "textures", "materials", "blender", "unreal", "game-assets"]
+}

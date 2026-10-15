@@ -1,0 +1,12 @@
+{
+  "name": "metahuman-tools",
+  "description": "Game-art tooling for the MetaHuman project",
+  "owner": { "name": "southwesternprod-afk" },
+  "plugins": [
+    {
+      "name": "aaa-materials",
+      "source": "./plugins/aaa-materials",
+      "description": "AAA PBR textures and materials: presets, bakes, validator, material balls, Unreal material instances"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "metahuman-tools": {
+      "source": { "source": "github", "repo": "southwesternprod-afk/Meta-human-unreall-rpoject" }
+    }
+  },
+  "enabledPlugins": {
+    "aaa-materials@metahuman-tools": true
+  }
+}
