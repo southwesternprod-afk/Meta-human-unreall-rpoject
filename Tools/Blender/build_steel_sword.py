@@ -206,23 +206,6 @@ def build_guard_block():
     return loft("GuardBlock", rings)
 
 
-def build_langet(side):
-    """Tapered tab that runs up the blade's flat from the guard (one per face)."""
-    y0 = side * (BLADE_T0 / 2 - 0.0003)
-    rings = []
-    z0, length = GUARD_Z + 0.010, 0.032
-    steps = 8
-    for i in range(steps + 1):
-        u = i / steps
-        hw = lerp(0.0085, 0.0028, u)
-        th = lerp(0.0022, 0.0012, u)
-        y1 = y0 + side * th
-        sect = [(hw, y0), (hw * 0.75, y1), (-hw * 0.75, y1), (-hw, y0)]
-        rings.append([Vector((x, y, z0 + u * length)) for x, y in sect])
-    tip = Vector((0, y0 + side * 0.0006, z0 + length + 0.006))
-    return loft(f"Langet{'F' if side > 0 else 'B'}", rings, tip=tip)
-
-
 def build_grip():
     rings = []
     seg, steps = 32, 120
@@ -327,8 +310,6 @@ def build_sword():
         (build_blade(), steel),
         (build_guard(), fittings),
         (build_guard_block(), fittings),
-        (build_langet(1), fittings),
-        (build_langet(-1), fittings),
         (build_grip(), leather),
         (build_ring("FerruleTop", GRIP_HALF - 0.004, GRIP_HALF + 0.006, 0.0172, 0.0142, groove=0.0006), fittings),
         (build_ring("FerruleBottom", -GRIP_HALF - 0.006, -GRIP_HALF + 0.004, 0.0172, 0.0142, groove=0.0006), fittings),

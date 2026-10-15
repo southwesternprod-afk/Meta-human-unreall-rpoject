@@ -3,7 +3,7 @@
 Procedural steel longsword built by `Tools/Blender/build_steel_sword.py` (Blender 5.2).
 
 Details: fullered blade with a flat ricasso and a secondary cutting bevel,
-curved crossguard with a centre block and langets, leather-wrapped grip over
+curved crossguard with a raised centre block, leather-wrapped grip over
 three risers, grooved ferrules, recessed wheel pommel with a domed peen.
 
 | | |
