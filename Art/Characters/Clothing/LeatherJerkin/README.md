@@ -47,6 +47,7 @@ Gloves, belt and pouches are separate items (not included here).
 2. In the Content Browser, click your MetaHuman's body mesh (`SKM_John_doe_BodyMesh`).
 3. **File → Execute Python Script…** and pick `Import_LeatherJerkin_Unreal.py`.
 4. The top appears in `Content/Characters/Clothing/LeatherJerkin`.
+   The script also builds 4 LODs so the top stays cheap at a distance.
 
 ## Put it on the character
 
