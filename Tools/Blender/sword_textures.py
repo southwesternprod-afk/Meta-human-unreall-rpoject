@@ -175,8 +175,8 @@ def build_bake_material(sword, engraving_path):
     s3 = g.math("MULTIPLY", scratch_layer((110, 110, 10), (0, 1.15, 0), 0.03), 0.45)
     scratch = g.math("MULTIPLY", g.math("MAXIMUM", g.math("MAXIMUM", s1, s2), s3), patch)
 
-    pits = g.math("MULTIPLY", g.remap(g.voronoi(P, 650.0), 0.0, 0.16, 1.0, 0.0),
-                  g.remap(g.noise(P, 25.0, 2.0), 0.48, 0.6))
+    pits = g.math("MULTIPLY", g.remap(g.voronoi(P, 650.0), 0.0, 0.12, 0.7, 0.0),
+                  g.remap(g.noise(P, 25.0, 2.0), 0.52, 0.62))
     grain = g.remap(g.math("ADD", g.math("MULTIPLY", g.voronoi(P, 1700.0), 0.7),
                            g.math("MULTIPLY", g.noise(P, 500.0, 4.0), 0.5)), 0.2, 0.8)
     worn = g.math("MULTIPLY", g.math("SUBTRACT", 1.0, cavity_m),
@@ -188,7 +188,9 @@ def build_bake_material(sword, engraving_path):
     # Inscription: object-space projection into the fuller, both faces.
     xyz = g.node("ShaderNodeSeparateXYZ", {"Vector": P}).outputs
     u = g.math("DIVIDE", g.math("SUBTRACT", xyz["Z"], ENGRAVE_Z0), ENGRAVE_LEN)
-    v = g.math("ADD", g.math("DIVIDE", xyz["X"], ENGRAVE_HEIGHT), 0.5)
+    # Mirror on the back face so the words read correctly from both sides.
+    side = g.math("SIGN", g.node("ShaderNodeSeparateXYZ", {"Vector": tc.outputs["Normal"]}).outputs["Y"])
+    v = g.math("ADD", g.math("DIVIDE", g.math("MULTIPLY", xyz["X"], side), ENGRAVE_HEIGHT), 0.5)
     engr_img = bpy.data.images.load(str(engraving_path), check_existing=True)
     engr_img.colorspace_settings.name = "Non-Color"
     engr_uv = g.node("ShaderNodeCombineXYZ", {"X": u, "Y": v}).outputs["Vector"]
@@ -208,7 +210,7 @@ def build_bake_material(sword, engraving_path):
     blade = g.mix_color(blade, rgb(0.92, 0.70, 0.36), engr)
 
     fit = g.mix_color(rgb(0.36, 0.36, 0.38), rgb(0.45, 0.45, 0.47), streak_f)
-    fit = g.mix_color(fit, rgb(0.20, 0.20, 0.21), pits)
+    fit = g.mix_color(fit, rgb(0.27, 0.27, 0.28), pits)
     fit = g.mix_color(fit, rgb(0.72, 0.72, 0.73), edge_m)
     fit = g.mix_color(fit, rgb(0.70, 0.70, 0.71), g.math("MULTIPLY", scratch, 0.5))
     fit = g.mix_color(fit, rgb(0.08, 0.07, 0.06), g.math("MULTIPLY", cavity_m, 0.9))
@@ -220,7 +222,7 @@ def build_bake_material(sword, engraving_path):
     base = g.mix_color(g.mix_color(fit, blade, is_blade), leather, is_leather)
 
     # ---- Roughness / metallic ----------------------------------------------
-    r_blade = g.math("ADD", g.math("ADD", 0.19, g.math("MULTIPLY", streak, 0.10)),
+    r_blade = g.math("ADD", g.math("ADD", 0.20, g.math("MULTIPLY", streak, 0.06)),
                      g.math("MULTIPLY", smudge, 0.16))
     r_blade = g.mix_float(r_blade, 0.10, polish)
     r_blade = g.mix_float(r_blade, 0.40, g.math("MULTIPLY", scratch, 0.8))
@@ -247,7 +249,7 @@ def build_bake_material(sword, engraving_path):
     base_emit = g.node("ShaderNodeEmission", {"Color": base})
 
     # ---- Surface detail (normal map) ---------------------------------------
-    h_blade = g.math("SUBTRACT", g.math("MULTIPLY", streak, 0.15),
+    h_blade = g.math("SUBTRACT", g.math("MULTIPLY", streak, 0.06),
                      g.math("ADD", g.math("MULTIPLY", scratch, 0.6), engr))
     h_fit = g.math("SUBTRACT", g.math("MULTIPLY", streak_f, 0.3),
                    g.math("ADD", g.math("MULTIPLY", pits, 0.9), g.math("MULTIPLY", scratch, 0.5)))
