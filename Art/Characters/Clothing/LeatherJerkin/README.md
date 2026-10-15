@@ -20,7 +20,7 @@ Gloves, belt and pouches are separate items (not included here).
 
 | | |
 |---|---|
-| Mesh | ~112k verts, skinned to the MetaHuman body skeleton (341 bones, max 8 influences) |
+| Mesh | ~138k verts, skinned to the MetaHuman body skeleton (341 bones, max 8 influences) |
 | Material | `M_LeatherJerkin` (single texture set) |
 | Textures (4096²) | `T_LeatherJerkin_BaseColor` (sRGB), `T_LeatherJerkin_Normal` (DirectX), `T_LeatherJerkin_ORM` (R AO, G roughness, B metallic) |
 
