@@ -814,16 +814,20 @@ def jerkin_layers(c):
     crest = g.math("MULTIPLY", g.image(crest_img, crest_uv, "CLIP").outputs["Color"], c.is_part(STEEL))
     crest_outline = g.math("MULTIPLY", g.math("MULTIPLY", crest, g.math("SUBTRACT", 1.0, crest)), 4.0)
     etched = g.math("MULTIPLY", near(ed, 0.009, 0.0011), c.is_part(STEEL))   # etched border on the plates
+    # Plates are only 2 mm thick, so the AO-based edge mask would flag them
+    # everywhere; worn bright metal comes from the distance to the plate rim.
+    steel_edge = g.math("MAXIMUM", g.remap(ed, 0.0, 0.0045, 1.0, 0.0),
+                        g.math("MULTIPLY", hammer, g.math("MULTIPLY", scratch, 0.5)))
     sbase = g.mix_color(rgb(0.050, 0.050, 0.054), rgb(0.095, 0.095, 0.10), tone_s)
     sbase = g.mix_color(sbase, rgb(0.035, 0.035, 0.038), g.math("MULTIPLY", hammer, 0.35))
-    sbase = g.mix_color(sbase, rgb(0.42, 0.42, 0.43), g.math("MULTIPLY", c.edge, 0.9))
+    sbase = g.mix_color(sbase, rgb(0.42, 0.42, 0.43), g.math("MULTIPLY", steel_edge, 0.9))
     sbase = g.mix_color(sbase, rgb(0.30, 0.30, 0.31), g.math("MULTIPLY", scratch, 0.6))
     sbase = g.mix_color(sbase, rgb(0.24, 0.24, 0.25), g.math("MULTIPLY", crest, 0.9))
     sbase = g.mix_color(sbase, rgb(0.015, 0.015, 0.016), g.math("MAXIMUM", crest_outline, etched))
     sbase = g.mix_color(sbase, rgb(0.11, 0.05, 0.022), g.math("MULTIPLY", rust, 0.75))
     sbase = g.mix_color(sbase, rgb(0.02, 0.018, 0.016), g.math("MULTIPLY", c.cavity, 0.8))
     srough = g.math("ADD", 0.46, g.math("MULTIPLY", tone_s, 0.14))
-    srough = g.mix_float(srough, 0.24, c.edge)
+    srough = g.mix_float(srough, 0.24, steel_edge)
     srough = g.mix_float(srough, 0.38, g.math("MULTIPLY", scratch, 0.6))
     srough = g.mix_float(srough, 0.30, crest)
     srough = g.mix_float(srough, 0.85, rust)
