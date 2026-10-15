@@ -299,20 +299,20 @@ def axe_layers(c):
     inlay = c.projected_mask(INLAY, "X", (0.031, 0.045), "Z", (0.583, 0.643), "X",
                              g.math("MULTIPLY", is_head, g.math("GREATER_THAN", c.edgeu, 0.0)))
 
-    base = g.mix_color(rgb(0.20, 0.20, 0.21), rgb(0.31, 0.31, 0.32), tone)
-    base = g.mix_color(base, rgb(0.16, 0.16, 0.17), g.math("MULTIPLY", hammer, 0.35))
-    base = g.mix_color(base, rgb(0.05, 0.05, 0.055),
-                       g.math("ADD", g.math("MULTIPLY", c.cavity, 0.8),
-                              g.math("MULTIPLY", scale_patch, 0.35), clamp=True))
-    base = g.mix_color(base, rgb(0.62, 0.62, 0.63), c.edge)
-    base = g.mix_color(base, rgb(0.60, 0.60, 0.61), g.math("MULTIPLY", scratch, 0.55))
+    base = g.mix_color(rgb(0.13, 0.13, 0.14), rgb(0.21, 0.21, 0.22), tone)
+    base = g.mix_color(base, rgb(0.10, 0.10, 0.11), g.math("MULTIPLY", hammer, 0.4))
+    base = g.mix_color(base, rgb(0.04, 0.04, 0.045),
+                       g.math("ADD", g.math("MULTIPLY", c.cavity, 0.85),
+                              g.math("MULTIPLY", scale_patch, 0.5), clamp=True))
+    base = g.mix_color(base, rgb(0.55, 0.55, 0.56), c.edge)
+    base = g.mix_color(base, rgb(0.45, 0.45, 0.46), g.math("MULTIPLY", scratch, 0.3))
     base = g.mix_color(base, g.mix_color(rgb(0.62, 0.62, 0.63), rgb(0.77, 0.77, 0.78), grind), polish)
     base = g.mix_color(base, rgb(0.92, 0.70, 0.36), inlay)
 
-    rough = g.math("ADD", 0.42, g.math("MULTIPLY", tone, 0.12))
-    rough = g.mix_float(rough, 0.62, g.math("MULTIPLY", scale_patch, 0.6))
-    rough = g.mix_float(rough, 0.24, c.edge)
-    rough = g.mix_float(rough, 0.42, g.math("MULTIPLY", scratch, 0.8))
+    rough = g.math("ADD", 0.50, g.math("MULTIPLY", tone, 0.08))
+    rough = g.mix_float(rough, 0.66, g.math("MULTIPLY", scale_patch, 0.6))
+    rough = g.mix_float(rough, 0.26, c.edge)
+    rough = g.mix_float(rough, 0.45, g.math("MULTIPLY", scratch, 0.5))
     rough = g.mix_float(rough, 0.72, c.cavity)
     rough = g.mix_float(rough, g.math("ADD", 0.12, g.math("MULTIPLY", grind, 0.08)), polish)
     rough = g.mix_float(rough, 0.30, inlay)
@@ -328,10 +328,10 @@ def axe_layers(c):
     grain = g.remap(g.noise(g.mapping(c.P, (250, 250, 4)), 1.0, 6.0, 0.55), 0.3, 0.7)
     lines = g.remap(g.noise(g.mapping(c.P, (520, 520, 6)), 1.0, 3.0, 0.5), 0.5, 0.56)
     pores = g.remap(g.noise(g.mapping(c.P, (2600, 2600, 260)), 1.0, 2.0, 0.5), 0.62, 0.74)
-    wbase = g.mix_color(rgb(0.19, 0.11, 0.055), rgb(0.30, 0.18, 0.09), grain)
-    wbase = g.mix_color(wbase, rgb(0.11, 0.06, 0.03), g.math("MULTIPLY", lines, 0.7))
-    wbase = g.mix_color(wbase, rgb(0.08, 0.045, 0.02), g.math("MULTIPLY", pores, 0.6))
-    wbase = g.mix_color(wbase, rgb(0.36, 0.24, 0.14), g.math("MULTIPLY", scratch, 0.35))
+    wbase = g.mix_color(rgb(0.10, 0.052, 0.022), rgb(0.19, 0.10, 0.045), grain)
+    wbase = g.mix_color(wbase, rgb(0.055, 0.028, 0.012), g.math("MULTIPLY", lines, 0.7))
+    wbase = g.mix_color(wbase, rgb(0.04, 0.02, 0.009), g.math("MULTIPLY", pores, 0.6))
+    wbase = g.mix_color(wbase, rgb(0.26, 0.16, 0.08), g.math("MULTIPLY", scratch, 0.3))
     wbase = g.mix_color(wbase, rgb(0.05, 0.03, 0.015), g.math("MULTIPLY", c.cavity, 0.85))
     wrough = g.math("ADD", 0.52, g.math("MULTIPLY", grain, 0.10))
     wrough = g.mix_float(wrough, 0.75, pores)
@@ -362,10 +362,10 @@ def render_previews(axe):
     def at(x, z):
         return axe.matrix_world @ Vector((x, 0, z))
 
-    mid = at(0.03, 0.27)
-    kit.render_view(renders / "SteelAxe_Hero.png", mid + Vector((0.10, -0.80, 0.72)), mid, 42)
-    head = at(0.07, 0.585)
-    kit.render_view(renders / "SteelAxe_Head.png", head + Vector((0.10, -0.24, 0.26)), head, 60)
+    mid = at(0.07, 0.30)
+    kit.render_view(renders / "SteelAxe_Hero.png", mid + Vector((0.10, -0.85, 0.80)), mid, 40)
+    head = at(0.07, 0.575)
+    kit.render_view(renders / "SteelAxe_Head.png", head + Vector((0.12, -0.30, 0.34)), head, 55)
     grip = at(0.0, 0.0)
     kit.render_view(renders / "SteelAxe_Grip.png", grip + Vector((0.14, -0.30, 0.24)), grip, 60)
     langets = at(0.0, 0.50)
