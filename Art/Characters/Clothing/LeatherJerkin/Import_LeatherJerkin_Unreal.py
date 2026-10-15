@@ -103,6 +103,19 @@ def build_material(base, normal, orm):
     return mat
 
 
+def make_lods(mesh, count=4):
+    """Game-ready LODs: Unreal's skeletal mesh reduction builds LOD1-3 from the
+    full-detail mesh, so the top stays cheap when the character is far away."""
+    try:
+        subsystem = unreal.get_editor_subsystem(unreal.SkeletalMeshEditorSubsystem)
+        if subsystem.regenerate_lod(mesh, count, True, False):
+            unreal.log("Generated {} LODs for {}".format(count, MESH_NAME))
+            return
+    except Exception as exc:  # older/newer editors without this call
+        unreal.log_warning("LOD generation skipped ({}). You can add LODs in the mesh editor: "
+                           "LOD Settings > Number of LODs = 4 > Apply Changes.".format(exc))
+
+
 def main():
     skeleton = find_skeleton()
     if skeleton is None:
@@ -124,6 +137,7 @@ def main():
     for slot in materials:
         slot.set_editor_property("material_interface", mat)
     mesh.set_editor_property("materials", materials)
+    make_lods(mesh)
     assets.save_loaded_asset(mesh)
     assets.sync_browser_to_objects(["{}/{}".format(DEST, MESH_NAME)])
     unreal.log("Leather jerkin imported to {}".format(DEST))

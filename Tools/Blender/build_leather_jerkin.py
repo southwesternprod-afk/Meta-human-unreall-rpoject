@@ -496,12 +496,20 @@ def build_shoulder_straps(body, torso_bm):
                         h = max(h, 0.04 - hit[3] + extra)
                 hs.append(h)
             heights.append(hs)
+        # a thick strap stays flat across its width: fit a tilted line over the
+        # columns that clears all of them, then keep it taut and smooth along the strap
         heights = np.array(heights)
-        for col in range(len(ACROSS)):
-            h = heights[:, col]
-            for _ in range(30):
-                h = np.maximum(h, circular_smooth(h, k=2, passes=1))
-            heights[:, col] = h
+        ks = np.array(ACROSS)
+        tilt = (heights[:, -1] - heights[:, 0]) / 2
+        tilt = circular_smooth(tilt, k=6, passes=4)
+        base = (heights - tilt[:, None] * ks[None, :]).max(1)
+        for _ in range(150):
+            base = np.maximum(base, circular_smooth(base, k=3, passes=1))
+        base = circular_smooth(base, k=3, passes=2)
+        need = (heights - tilt[:, None] * ks[None, :]).max(1)
+        base = np.maximum(base, need - 0.0008)
+        base = circular_smooth(base, k=2, passes=1)
+        heights = base[:, None] + tilt[:, None] * ks[None, :]
 
         rows, along, tops = [], [], []
         for j, (cpos, (nrm, side)) in enumerate(zip(centers, frames)):
@@ -600,8 +608,9 @@ def build_sleeves(body):
     armw = body.family(r"(upperarm|lowerarm|hand|thumb_|index_|middle_|ring_|pinky_)")
     hand = body.family(r"(hand|thumb_|index_|middle_|ring_|pinky_)")
     mask = (armw > 0.22) & (hand < 0.15)
-    bm = ck.shell_from_faces(body, body.region_faces(mask), offset=0.008, smooth_iters=12,
+    bm = ck.shell_from_faces(body, body.region_faces(mask), offset=0.0085, smooth_iters=12,
                              smooth_factor=0.5, min_offset=0.0065)
+    bm = subdivide(bm)
     pieces = []
     for side in (1, -1):
         sh, el, wr = arm_axes(body, side)
@@ -611,11 +620,42 @@ def build_sleeves(body):
         cut_plane(part, (0, 0, 0), (-side, 0, 0))
         cut_plane(part, wr - d * 0.03, d)
         orient_outward(part)
+        quilt_sleeve(body, part, sh, el, wr)
         p = Piece(f"Sleeve_{side}", part, CLOTH)
         cylinder_pc(p, sh, wr)
         pieces.append(p)
     bm.free()
     return pieces
+
+
+def quilt_sleeve(body, bm, sh, el, wr):
+    """Sunken quilting channels running down the arm (same spacing as the texture)
+    and the padded sleeve bunching up at the elbow and above the bracer."""
+    axis = (wr - sh).normalized()
+    ref = Vector((0, -1, 0))
+    ref = (ref - axis * ref.dot(axis)).normalized()
+    side = axis.cross(ref)
+    upper = (el - sh).length
+    fore = (wr - el).length
+    bm.normal_update()
+    disp = []
+    for v in bm.verts:
+        dv = v.co - sh
+        along = dv.dot(axis)
+        radial = dv - axis * along
+        ang = math.atan2(radial.dot(side), radial.dot(ref))
+        channel = math.sin(ang * 0.05 * math.pi / 0.026)
+        d = -0.0013 * math.exp(-channel * channel / 0.03) + 0.0006 * min(1.0, abs(channel) * 3)
+        # bunching: around the elbow and on the forearm just above the bracer
+        e = along - upper
+        bunch = math.exp(-(e / 0.06) ** 2) + math.exp(-((e - fore * 0.24) / 0.035) ** 2)
+        wave = math.sin(2 * math.pi * along / 0.028 + 1.8 * mnoise.noise(v.co * 9.0) + ang * 0.6)
+        d += 0.0030 * bunch * wave + 0.0010 * mnoise.noise(v.co * 14.0)
+        disp.append(d)
+    for v, d in zip(bm.verts, disp):
+        v.co += v.normal * d
+    ck.push_out(body, bm.verts, 0.0045)
+    bm.normal_update()
 
 
 def build_mail_sleeves(body):
@@ -741,6 +781,8 @@ def build_pauldrons(body):
         C = sh + e2 * 0.004 - A * 0.012
 
         def direction(alpha, phi):
+            # lames sweep down towards their front and back ends (the pole stays put)
+            alpha = alpha + math.radians(8) * (phi / math.radians(118)) ** 2 * (alpha / math.radians(116))
             return (-A * math.cos(alpha) * 1.0 + (e2 * math.cos(phi) + e3 * math.sin(phi)) * math.sin(alpha))
 
         def stretch(alpha):
@@ -995,7 +1037,7 @@ def jerkin_layers(c):
     leather = wt.Surface(lbase, lrough, 0.0, lheight, 0.00022)
 
     # ---- blackened steel: pauldrons, buckles, rivets -----------------------------------------
-    hammer = g.remap(g.voronoi(c.P, 70.0), 0.0, 0.55)
+    hammer = g.remap(g.noise(c.P, 55.0, 2.0), 0.3, 0.7)          # soft hammer dents
     tone_s = g.remap(g.noise(c.P, 30.0, 4.0), 0.4, 0.65)
     rust = g.math("MULTIPLY", g.remap(g.noise(c.P, 18.0, 5.0, 0.65), 0.6, 0.74),
                   g.math("ADD", g.math("MULTIPLY", c.cavity, 0.8), 0.25))
@@ -1003,8 +1045,8 @@ def jerkin_layers(c):
     # pc = (phi * r, alpha * r); the cap (r ~ 0.145 m) faces outwards around alpha 38 deg,
     # so the crest is centred there with its tip towards the neck.
     crest_uv = g.node("ShaderNodeCombineXYZ", {
-        "X": g.math("ADD", g.math("DIVIDE", pc["X"], 0.088), 0.5),
-        "Y": g.math("DIVIDE", g.math("SUBTRACT", 0.140, pc["Y"]), 0.088)}).outputs["Vector"]
+        "X": g.math("ADD", g.math("DIVIDE", pc["X"], 0.105), 0.5),
+        "Y": g.math("DIVIDE", g.math("SUBTRACT", 0.1425, pc["Y"]), 0.105)}).outputs["Vector"]
     crest_img = bpy.data.images.load(str(CREST), check_existing=True)
     crest_img.colorspace_settings.name = "Non-Color"
     crest = g.math("MULTIPLY", g.image(crest_img, crest_uv, "CLIP").outputs["Color"], c.is_part(STEEL))
@@ -1013,21 +1055,20 @@ def jerkin_layers(c):
     # Plates are only 2 mm thick, so the AO-based edge mask would flag them
     # everywhere; worn bright metal comes from the distance to the plate rim.
     steel_edge = g.remap(ed, 0.0, 0.0045, 1.0, 0.0)
-    sbase = g.mix_color(rgb(0.050, 0.050, 0.054), rgb(0.095, 0.095, 0.10), tone_s)
-    sbase = g.mix_color(sbase, rgb(0.035, 0.035, 0.038), g.math("MULTIPLY", hammer, 0.35))
-    sbase = g.mix_color(sbase, rgb(0.42, 0.42, 0.43), g.math("MULTIPLY", steel_edge, 0.9))
-    sbase = g.mix_color(sbase, rgb(0.22, 0.22, 0.23), g.math("MULTIPLY", scratch, 0.22))
-    sbase = g.mix_color(sbase, rgb(0.24, 0.24, 0.25), g.math("MULTIPLY", crest, 0.9))
+    sbase = g.mix_color(rgb(0.040, 0.040, 0.043), rgb(0.080, 0.080, 0.084), tone_s)
+    sbase = g.mix_color(sbase, rgb(0.030, 0.030, 0.032), g.math("MULTIPLY", hammer, 0.25))
+    sbase = g.mix_color(sbase, rgb(0.28, 0.28, 0.29), g.math("MULTIPLY", steel_edge, 0.85))
+    sbase = g.mix_color(sbase, rgb(0.30, 0.30, 0.31), g.math("MULTIPLY", crest, 0.9))
     sbase = g.mix_color(sbase, rgb(0.015, 0.015, 0.016), g.math("MAXIMUM", crest_outline, etched))
     sbase = g.mix_color(sbase, rgb(0.11, 0.05, 0.022), g.math("MULTIPLY", rust, 0.75))
     sbase = g.mix_color(sbase, rgb(0.02, 0.018, 0.016), g.math("MULTIPLY", c.cavity, 0.8))
     srough = g.math("ADD", 0.46, g.math("MULTIPLY", tone_s, 0.14))
-    srough = g.mix_float(srough, 0.24, steel_edge)
-    srough = g.mix_float(srough, 0.30, crest)
+    srough = g.mix_float(srough, 0.30, steel_edge)
+    srough = g.mix_float(srough, 0.26, crest)
     srough = g.mix_float(srough, 0.85, rust)
     srough = g.mix_float(srough, 0.75, c.cavity)
     smetal = g.math("SUBTRACT", wt.metal_with_grime(c), g.math("MULTIPLY", rust, 0.7))
-    sheight = g.math("ADD", g.math("MULTIPLY", hammer, 0.45),
+    sheight = g.math("ADD", g.math("MULTIPLY", hammer, 0.30),
                      g.math("SUBTRACT", g.math("MULTIPLY", crest, 2.2),
                             g.math("MULTIPLY", etched, 1.2)))
     steel = wt.Surface(sbase, srough, smetal, sheight, 0.00012)
@@ -1038,7 +1079,7 @@ def jerkin_layers(c):
     folds = g.remap(g.noise(g.mapping(c.P, (8, 8, 40)), 1.0, 4.0, 0.55), 0.35, 0.65)
     weave = g.remap(g.noise(g.mapping(c.P, (2600, 2600, 2600)), 1.0, 2.0), 0.35, 0.65)
     wool_var = g.remap(g.noise(c.P, 14.0, 3.0), 0.35, 0.65)
-    cbase = g.mix_color(rgb(0.050, 0.053, 0.037), rgb(0.088, 0.090, 0.064), wool_var)
+    cbase = g.mix_color(rgb(0.034, 0.033, 0.022), rgb(0.066, 0.062, 0.042), wool_var)
     cbase = g.mix_color(cbase, rgb(0.034, 0.035, 0.025), g.math("MULTIPLY", weave, 0.3))
     cbase = g.mix_color(cbase, rgb(0.022, 0.023, 0.016), g.math("MULTIPLY", quilt_line, 0.8))
     cbase = g.mix_color(cbase, rgb(0.026, 0.026, 0.019), g.math("MULTIPLY", g.math("SUBTRACT", 1.0, folds), 0.35))
@@ -1052,7 +1093,7 @@ def jerkin_layers(c):
     # ---- riveted mail -------------------------------------------------------------------
     def ring_grid(offset):
         m = g.node("ShaderNodeMapping", {"Vector": g.node("ShaderNodeCombineXYZ", {"X": pc["X"], "Y": pc["Y"]}).outputs["Vector"],
-                                         "Scale": (1 / 0.0075, 1 / 0.0075, 1.0), "Location": (offset, offset, 0.0)})
+                                         "Scale": (1 / 0.0085, 1 / 0.0085, 1.0), "Location": (offset, offset, 0.0)})
         vor = g.node("ShaderNodeTexVoronoi", {"Vector": m.outputs["Vector"], "Scale": 1.0, "Randomness": 0.0},
                      voronoi_dimensions="2D")
         d = vor.outputs["Distance"]
@@ -1061,10 +1102,11 @@ def jerkin_layers(c):
 
     rings = g.math("MAXIMUM", ring_grid(0.0), ring_grid(0.5))
     mrust = g.math("MULTIPLY", g.remap(g.noise(c.P, 30.0, 4.0), 0.5, 0.68), g.math("SUBTRACT", 1.15, rings))
-    mbase = g.mix_color(rgb(0.004, 0.004, 0.004), rgb(0.20, 0.20, 0.205), rings)
+    ring_var = g.remap(g.noise(c.P, 160.0, 1.0), 0.3, 0.7)
+    mbase = g.mix_color(rgb(0.003, 0.003, 0.003), g.mix_color(rgb(0.075, 0.075, 0.078), rgb(0.15, 0.15, 0.155), ring_var), rings)
     mbase = g.mix_color(mbase, rgb(0.085, 0.040, 0.017), g.math("MULTIPLY", mrust, 0.65))
     mbase = g.mix_color(mbase, rgb(0.012, 0.012, 0.012), g.math("MULTIPLY", c.cavity, 0.7))
-    mrough = g.mix_float(g.mix_float(0.8, 0.36, rings), 0.85, g.math("MULTIPLY", mrust, 0.7))
+    mrough = g.mix_float(g.mix_float(0.85, 0.40, rings), 0.88, g.math("MULTIPLY", mrust, 0.7))
     mmetal = g.math("MULTIPLY", rings, g.math("SUBTRACT", 1.0, g.math("MULTIPLY", mrust, 0.6)))
     mail = wt.Surface(mbase, mrough, mmetal, rings, 0.0012)
 
