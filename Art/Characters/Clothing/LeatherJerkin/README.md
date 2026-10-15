@@ -7,7 +7,8 @@ Medieval fantasy top for the MetaHuman **John_doe**, built by
 Pieces (one skeletal mesh, one material):
 
 - leather jerkin: torso, flared skirt with front/back slits, stand-up collar, V-neck,
-  waist band, centre placket with five buckled closure straps, diagonal cross strap
+  waist band, centre placket with five buckled closure straps, buckled X cross straps;
+  riveted mail fauld showing through the skirt slits
 - quilted wool gambeson sleeves; riveted mail over the upper arms and under the V-neck
 - leather bracers with three buckled straps each
 - laminated steel pauldrons (cap + four lames, riveted) with an embossed fleur-de-lis
