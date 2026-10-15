@@ -1,7 +1,7 @@
 # SM_SteelSword
 
 Game-ready steel longsword built by `Tools/Blender/build_steel_sword.py`
-(Blender 5.2), with a baked PBR texture set from `Tools/Blender/sword_textures.py`.
+(Blender 5.2), with a baked PBR texture set from `Tools/Blender/weapon_textures.py`.
 
 Details: fullered blade with a flat ricasso, a secondary cutting bevel and a
 gold-inlaid inscription (`+ IN NOMINE DOMINI +`), curved crossguard with a raised
@@ -48,4 +48,4 @@ python3 Tools/Blender/build_steel_sword.py --render     # also preview renders
 ```
 
 Dimensions are constants at the top of `build_steel_sword.py`; colours, wear amounts
-and the inscription placement live in `sword_textures.py`.
+and the inscription placement live in `weapon_textures.py`.

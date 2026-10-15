@@ -10,7 +10,7 @@ Outputs go to Art/Weapons/SteelSword/:
     SM_SteelSword.fbx   - static mesh + UCX_ collision + SOCKET_ empties (Unreal)
     SM_SteelSword.glb   - textured mesh (web preview / other engines)
     SM_SteelSword.blend - source scene
-    Textures/*.png      - PBR texture set (see sword_textures.py)
+    Textures/*.png      - PBR texture set (see weapon_textures.py)
     Renders/*.png       - preview renders (with --render)
 
 Conventions: metres in Blender (exported so 1 m = 100 uu in Unreal), Z up,
@@ -26,7 +26,7 @@ import bpy  # must come before bmesh when running as a module
 import bmesh
 from mathutils import Vector
 
-import sword_textures
+import weapon_textures
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = REPO_ROOT / "Art" / "Weapons" / "SteelSword"
@@ -60,10 +60,11 @@ def smoothstep(t):
 
 
 # --- Mesh helpers -----------------------------------------------------------
-def loft(name, rings, cap_start=True, cap_end=True, tip=None, sharp_cols=()):
+def loft(name, rings, cap_start=True, cap_end=True, tip=None, sharp_cols=(), sharp_rings=()):
     """Skin a list of equal-length vertex rings into a closed mesh object.
 
     sharp_cols: ring indices whose lengthwise edges get a hard crease.
+    sharp_rings: rings whose own edge loop gets a hard crease.
     """
     bm = bmesh.new()
     vrings = [[bm.verts.new(p) for p in ring] for ring in rings]
@@ -74,6 +75,10 @@ def loft(name, rings, cap_start=True, cap_end=True, tip=None, sharp_cols=()):
             bm.faces.new((a[j], a[k], b[k], b[j]))
         for j in sharp_cols:
             bm.edges.get((a[j], b[j])).smooth = False
+    for i in sharp_rings:
+        ring = vrings[i]
+        for j in range(n):
+            bm.edges.get((ring[j], ring[(j + 1) % n])).smooth = False
     if cap_start:
         bm.faces.new(list(reversed(vrings[0])))
     if tip is not None:
@@ -326,7 +331,7 @@ def bevel_and_normals(obj):
         bpy.ops.object.modifier_apply(modifier=mod.name)
 
 
-def unwrap(obj):
+def unwrap(obj, planar=None):
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
@@ -334,7 +339,8 @@ def unwrap(obj):
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.004)
     bpy.ops.object.mode_set(mode="OBJECT")
-    planar_blade_uvs(obj)
+    if planar:
+        planar(obj)
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.uv.select_all(action="SELECT")
@@ -389,7 +395,7 @@ def build_sword():
     sword = join([p[0] for p in parts], ASSET_NAME)
     finish_shading(sword)
     bevel_and_normals(sword)
-    unwrap(sword)
+    unwrap(sword, planar=planar_blade_uvs)
 
     # Simple convex collision: blade, guard, handle (Unreal UCX_ convention).
     blade_top = BLADE_START + BLADE_LEN
@@ -423,8 +429,8 @@ def build_sword():
     return sword, collisions
 
 
-def export(sword, collisions):
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+def export(sword, collisions, out_dir=OUT_DIR, asset_name=ASSET_NAME):
+    out_dir.mkdir(parents=True, exist_ok=True)
     extras = collisions + [c for c in sword.children if c.name.startswith("SOCKET_")]
 
     bpy.ops.object.select_all(action="DESELECT")
@@ -432,7 +438,7 @@ def export(sword, collisions):
         o.select_set(True)
     bpy.context.view_layer.objects.active = sword
     bpy.ops.export_scene.fbx(
-        filepath=str(OUT_DIR / f"{ASSET_NAME}.fbx"),
+        filepath=str(out_dir / f"{asset_name}.fbx"),
         use_selection=True,
         object_types={"MESH", "EMPTY"},
         apply_scale_options="FBX_SCALE_UNITS",
@@ -445,12 +451,12 @@ def export(sword, collisions):
     bpy.ops.object.select_all(action="DESELECT")
     sword.select_set(True)
     bpy.ops.export_scene.gltf(
-        filepath=str(OUT_DIR / f"{ASSET_NAME}.glb"),
+        filepath=str(out_dir / f"{asset_name}.glb"),
         export_format="GLB",
         use_selection=True,
     )
 
-    bpy.ops.wm.save_as_mainfile(filepath=str(OUT_DIR / f"{ASSET_NAME}.blend"), compress=True)
+    bpy.ops.wm.save_as_mainfile(filepath=str(out_dir / f"{asset_name}.blend"), compress=True)
 
 
 # --- Preview renders ---------------------------------------------------------
@@ -550,7 +556,7 @@ def render_previews(sword):
 
 if __name__ == "__main__":
     sword_obj, ucx = build_sword()
-    sword_textures.texture_sword(sword_obj, TEX_DIR, ENGRAVING, bake="--no-bake" not in sys.argv)
+    weapon_textures.texture_sword(sword_obj, TEX_DIR, ENGRAVING, bake="--no-bake" not in sys.argv)
     export(sword_obj, ucx)
     me = sword_obj.data
     print(f"{ASSET_NAME}: {len(me.vertices)} verts, {len(me.polygons)} faces, "
