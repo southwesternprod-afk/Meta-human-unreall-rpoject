@@ -27,7 +27,10 @@ from mathutils import noise as mnoise
 from mathutils.bvhtree import BVHTree
 
 import clothing_kit as ck
-import weapon_textures as wt
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "plugins" / "aaa-materials" / "lib"))
+import aaa_materials as aaa  # noqa: E402  (the repo's aaa-materials plugin)
+from aaa_materials import library as L  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = REPO_ROOT / "Art" / "Characters" / "Clothing" / "LeatherJerkin"
@@ -772,11 +775,34 @@ def buckle(center, normal, along, width, height, bar=0.0028):
 # --- pauldrons -----------------------------------------------------------------------
 # The cap faces mostly upwards, so the crest sits on its front-facing slope where it
 # is seen from the front, like the emblem in the reference.
-CREST_ALPHA = math.radians(40)   # crest centre, measured down from the top of the cap
+CREST_ALPHA = math.radians(32)   # crest centre, measured down from the top of the cap
 CREST_PHI = math.radians(62)     # ... and around it towards the front
 CREST_V = 0.090                  # pattern-space v of the crest centre (see jerkin_layers)
-def build_pauldrons(body):
+CREST_SIZE = 0.07                # crest height/width on the plate (metres)
+PAULDRON_ALPHA = 116     # how far down the arm the lames reach (degrees from the top)
+PAULDRON_PHI = 108       # how far the plates wrap around the front and back (degrees)
+PAULDRON_SCALE = 0.90    # outward size relative to the original, roomier design
+PAULDRON_GAP = 0.008     # air between the garment underneath and the plates
+
+
+def pieces_bvh(pieces):
+    """One BVH over the outer surfaces of several (not yet thickened) pieces."""
+    verts, polys = [], []
+    for p in pieces:
+        p.bm.verts.index_update()
+        off = len(verts)
+        verts += [v.co.copy() for v in p.bm.verts]
+        polys += [[off + v.index for v in f.verts] for f in p.bm.faces]
+    return BVHTree.FromPolygons(verts, polys)
+
+
+def build_pauldrons(body, garment):
+    """Laminated pauldrons (cap + four lames). Each is a slightly flattened dome
+    about the shoulder joint: PAULDRON_SCALE x the original size over the outside
+    of the shoulder, easing out towards the front and back just enough to clear
+    the jerkin and straps underneath (`garment` BVH) by PAULDRON_GAP."""
     pieces = []
+    amax, pmax = math.radians(PAULDRON_ALPHA), math.radians(PAULDRON_PHI)
     for side in (1, -1):
         sh, el, wr = arm_axes(body, side)
         A = (el - sh).normalized()                 # down the arm
@@ -785,49 +811,73 @@ def build_pauldrons(body):
         e3 = A.cross(e2)
         C = sh + e2 * 0.004 - A * 0.012
 
+        def plain(alpha, phi):
+            return -A * math.cos(alpha) + (e2 * math.cos(phi) + e3 * math.sin(phi)) * math.sin(alpha)
+
         def direction(alpha, phi):
             # lames sweep down towards their front and back ends (the pole stays put)
-            alpha = alpha + math.radians(8) * (phi / math.radians(118)) ** 2 * (alpha / math.radians(116))
-            return (-A * math.cos(alpha) * 1.0 + (e2 * math.cos(phi) + e3 * math.sin(phi)) * math.sin(alpha))
+            return plain(alpha + math.radians(8) * (phi / pmax) ** 2 * (alpha / amax), phi)
 
-        def stretch(alpha):
-            return 1.0 + 0.45 * max(0.0, math.cos(alpha) * -1)  # longer down the arm
-
-        # required radius: clear the body (mail sleeve + jerkin) everywhere under the plate
+        # original sizing: clear the skin + mail by 26 mm in 97% of directions
         req = []
         for alpha in np.radians(np.linspace(5, 115, 24)):
             for phi in np.radians(np.linspace(-115, 115, 24)):
-                dvec = direction(alpha, phi).normalized()
-                hit = body.bvh.ray_cast(C, dvec, 0.4)
+                hit = body.bvh.ray_cast(C, plain(alpha, phi).normalized(), 0.4)
                 if hit[0] is not None:
-                    req.append(hit[3] / (dvec.length * 1.0))
-        R = float(np.percentile(req, 97)) + 0.026
+                    req.append(hit[3])
+        r_out = (float(np.percentile(req, 97)) + 0.026) * PAULDRON_SCALE
+
+        def blend(alpha, phi):
+            s = min(1.0, math.sin(alpha) / math.sin(math.radians(40)))
+            return math.sin(phi) ** 2 * s * s * (3 - 2 * s)
+
+        # front/back radius: the least that clears what is underneath (outermost
+        # surface within reach of the plate), with the outer radius fixed
+        r_side = r_out
+        for alpha in np.radians(np.linspace(0, PAULDRON_ALPHA + 3, 24)):
+            for phi in np.radians(np.linspace(-PAULDRON_PHI - 3, PAULDRON_PHI + 3, 40)):
+                dv = direction(alpha, phi).normalized()
+                hit = garment.ray_cast(C + dv * 0.17, -dv, 0.17)
+                w = blend(alpha, phi)
+                if hit[0] is not None and w > 0.15:
+                    need = 0.17 - hit[3] + PAULDRON_GAP
+                    r_side = max(r_side, r_out + (need - r_out) / w)
+        r_side = min(r_side, r_out / PAULDRON_SCALE * 1.12)
+
+        def radius(alpha, phi):
+            return r_out + (r_side - r_out) * blend(alpha, phi)
+
+        print(f"  pauldron {side:+d}: outer radius {r_out:.3f}, front/back {r_side:.3f}")
         lames = [("Cap", 0, 54, 0.012), ("Lame1", 50, 70, 0.009), ("Lame2", 66, 86, 0.006),
-                 ("Lame3", 82, 102, 0.003), ("Lame4", 98, 116, 0.0)]
+                 ("Lame3", 82, 102, 0.003), ("Lame4", 98, PAULDRON_ALPHA, 0.0)]
+        r_crest = radius(CREST_ALPHA, side * CREST_PHI)
         for name, a0, a1, extra in lames:
             rows = []
             alphas = np.radians(np.linspace(a0, a1, 14 if name == "Cap" else 7))
-            phis = np.radians(np.linspace(-118, 118, 48))
+            phis = np.radians(np.linspace(-PAULDRON_PHI, PAULDRON_PHI, 48))
             for k, alpha in enumerate(alphas):
                 roll = 0.0025 if k == len(alphas) - 1 else 0.0
-                rows.append([C + direction(alpha, phi) * (R + extra + roll) for phi in phis])
+                rows.append([C + direction(alpha, phi) * (radius(alpha, phi) + extra + roll) for phi in phis])
             bm, vr = loft_grid(rows, closed=False)
-            orient_outward(bm)
+            for f in bm.faces:                     # face away from the shoulder joint
+                if f.normal.dot(f.calc_center_median() - C) < 0:
+                    f.normal_flip()
+            bm.normal_update()
             p = Piece(f"Pauldron{name}_{side}", bm, STEEL, thickness=0.002, rigid=True)
             for i, row in enumerate(vr):
                 for j, v in enumerate(row):
                     # v is anchored so the crest (centred at v = CREST_V) sits at CREST_ALPHA,
-                    # the outward face of the cap, whatever the plate's radius
-                    # u: arc length around the cap from the crest centre (positive towards the
-                    # front on both shoulders)
-                    p.pc[v] = ((side * phis[j] - CREST_PHI) * (R + extra) * math.sin(CREST_ALPHA),
-                               (alphas[i] - CREST_ALPHA) * (R + extra) + CREST_V)
+                    # the outward face of the cap; u is arc length around the cap from the
+                    # crest centre (positive towards the front on both shoulders)
+                    p.pc[v] = ((side * phis[j] - CREST_PHI) * (r_crest + extra) * math.sin(CREST_ALPHA),
+                               (alphas[i] - CREST_ALPHA) * (r_crest + extra) + CREST_V)
             pieces.append(p)
             # rivets at both ends of each overlap
             if name != "Cap":
-                for phi in np.radians((-108, 108)):
-                    pos = C + direction(math.radians(a0 + 3), phi) * (R + extra + 0.0035)
-                    pieces.append(rivet(pos, direction(math.radians(a0 + 3), phi)))
+                a = math.radians(a0 + 3)
+                for phi in np.radians((-PAULDRON_PHI + 10, PAULDRON_PHI - 10)):
+                    pos = C + direction(a, phi) * (radius(a, phi) + extra + 0.0035)
+                    pieces.append(rivet(pos, direction(a, phi)))
     return pieces
 
 
@@ -858,14 +908,17 @@ def build_all(body):
     torso = Piece("Torso", torso_bm, LEATHER, MAIN, thickness=0.004)
     skirt, mail_fauld = build_skirt(body, torso_bm)
     band, band_rivets = build_waist_band(torso_bm, skirt.bm)
-    pieces = [torso, skirt, mail_fauld, build_collar(body, torso_bm), build_mail_gorget(body), band]
+    collar = build_collar(body, torso_bm)
+    pieces = [torso, skirt, mail_fauld, collar, build_mail_gorget(body), band]
     pieces += band_rivets
     pieces += build_front_details(torso_bm)
-    pieces += build_shoulder_straps(body, torso_bm)
-    pieces += build_sleeves(body)
-    pieces += build_mail_sleeves(body)
+    straps = build_shoulder_straps(body, torso_bm)
+    sleeves = build_sleeves(body)
+    mail_sleeves = build_mail_sleeves(body)
+    pieces += straps + sleeves + mail_sleeves
     pieces += build_bracers(body)
-    pieces += build_pauldrons(body)
+    under = [p for p in [torso] + straps + sleeves + mail_sleeves if not p.rigid]
+    pieces += build_pauldrons(body, pieces_bvh(under))
     return pieces
 
 
@@ -949,181 +1002,100 @@ def pieces_to_object(pieces, name):
 
 
 # --- texture recipe -----------------------------------------------------------------------
+# Built from the aaa-materials presets (plugins/aaa-materials) plus the jerkin's own
+# construction details. Leather dyes are sRGB picks matched to the reference.
 CREST = OUT_DIR / "Source" / "T_LeatherJerkin_CrestMask.png"
+LEATHER_MAIN = "#563828"     # jerkin body, skirt, collar
+LEATHER_STRAP = "#432c1e"    # straps, waist band, placket closures
+LEATHER_BRACER = "#5e4130"   # bracers
+WOOL = "#4a4632"             # gambeson sleeves
+STITCH = "#7d6a52"           # waxed linen thread
 
 
 def jerkin_layers(c):
     """part 0 leather (tone 0 jerkin, 1 straps/band, 2 bracers), 1 steel,
     2 quilted wool gambeson, 3 riveted mail."""
     g = c.g
-    rgb = wt.rgb
-    pc = g.node("ShaderNodeSeparateXYZ", {
-        "Vector": g.node("ShaderNodeAttribute", attribute_name="pc").outputs["Vector"]}).outputs
-    tone = g.node("ShaderNodeAttribute", attribute_name="tone").outputs["Fac"]
-    P = g.node("ShaderNodeSeparateXYZ", {"Vector": c.P}).outputs
-    scratch = c.scratches()
+    srgb = aaa.engine.srgb
+    tone, part, ed = c.attr("tone"), c.attr("part"), c.attr("edgedist")
+    pc_vec = c.attr_vec("pc")
+    pc = g.xyz(pc_vec)
+    P = g.xyz(c.P)
 
     def near(x, target, width):
-        return g.remap(g.math("ABSOLUTE", g.math("SUBTRACT", x, target)), 0.0, width, 1.0, 0.0)
+        return g.remap(g.math("ABSOLUTE", g.sub(x, target)), 0.0, width, 1.0, 0.0)
 
     def dashes(x, period, duty=0.55):
-        return g.math("GREATER_THAN", g.math("SINE", g.math("MULTIPLY", x, 2 * math.pi / period)),
-                      1.0 - 2.0 * duty)
-
-    ed = g.node("ShaderNodeAttribute", attribute_name="edgedist").outputs["Fac"]
-    is_strap = g.math("LESS_THAN", g.math("ABSOLUTE", g.math("SUBTRACT", tone, STRAP)), 0.5)
-    is_bracer = g.math("GREATER_THAN", tone, 1.5)
-    is_main = g.math("LESS_THAN", tone, 0.5)
+        return g.math("GREATER_THAN", g.math("SINE", g.mul(x, 2 * math.pi / period)), 1.0 - 2.0 * duty)
 
     def stitch_dots(scale):
-        """Dotted stitch pattern that reads as running stitches along any band."""
-        f1 = g.voronoi(g.mapping(c.P, (1 / scale, 1 / scale, 1 / scale)), 1.0)
-        return g.remap(f1, 0.16, 0.30, 1.0, 0.0)
+        """Dotted running stitches that follow any band (3D cells, so no UV needed)."""
+        return g.remap(g.voronoi(g.mapping(c.P, (1 / scale,) * 3), 1.0), 0.16, 0.30, 1.0, 0.0)
 
-    # dust settles on the lower skirt; grime everywhere in the creases
-    dust = g.math("MULTIPLY", g.remap(P["Z"], HEM_Z, 1.02, 1.0, 0.0), g.remap(g.noise(c.P, 6.0, 3.0), 0.4, 0.7))
-
-    # ---- leather ---------------------------------------------------------------------
-    grain = g.remap(g.math("ADD", g.math("MULTIPLY", g.voronoi(c.P, 1400.0), 0.7),
-                           g.math("MULTIPLY", g.noise(c.P, 450.0, 4.0), 0.5)), 0.2, 0.8)
-    mottle = g.remap(g.noise(c.P, 9.0, 4.0), 0.30, 0.72)
-    stains = g.remap(g.noise(c.P, 3.5, 5.0, 0.65), 0.58, 0.72)
-    crease_noise = g.noise(g.mapping(c.P, (60, 60, 14)), 1.0, 6.0, 0.6)
-    creases = g.math("MULTIPLY", g.remap(g.math("ABSOLUTE", g.math("SUBTRACT", crease_noise, 0.5)), 0.0, 0.035, 1.0, 0.0),
-                     g.remap(g.noise(c.P, 4.0, 2.0), 0.5, 0.66))
-    scuff = g.math("MULTIPLY", g.remap(g.noise(c.P, 22.0, 6.0, 0.7), 0.56, 0.72), g.math("SUBTRACT", 1.0, c.cavity))
-    # panel layout: centre-front / centre-back panels mid brown, side panels darker
-    is_body = g.math("MULTIPLY", g.math("LESS_THAN", P["Z"], 1.47), is_main)
+    # ---- leather: one preset, three dyes -----------------------------------------------
+    is_strap, is_bracer = c.is_value(tone, STRAP), c.is_value(tone, BRACER)
+    is_body = g.mul(g.math("LESS_THAN", P["Z"], 1.47), c.is_value(tone, MAIN))
     ax = g.math("ABSOLUTE", P["X"])
     seam_x = g.mix_float(0.085, 0.07, g.math("GREATER_THAN", P["Y"], 0.0))
-    side_panel = g.math("MULTIPLY", g.remap(g.math("SUBTRACT", ax, seam_x), 0.0, 0.002), is_body)
-    seam = g.math("MULTIPLY", near(ax, seam_x, 0.0012), is_body)
-    piping = g.math("MULTIPLY", near(ax, seam_x, 0.0045), is_body)          # raised welt along each seam
-    stitch_rows = g.math("MAXIMUM", near(ax, g.math("ADD", seam_x, 0.0065), 0.0008),
-                         near(ax, g.math("SUBTRACT", seam_x, 0.0065), 0.0008))
-    seam_stitch = g.math("MULTIPLY", g.math("MULTIPLY", stitch_rows, dashes(P["Z"], 0.0065)), is_body)
-    # stitched, burnished trim along every open edge (hems, slits, cuffs, collar, straps)
-    stitch_off = g.mix_float(0.0068, 0.0032, is_strap)
-    edge_stitch = g.math("MULTIPLY", near(ed, stitch_off, 0.0008), stitch_dots(0.0042))
-    burnish = g.remap(ed, 0.0, 0.0035, 1.0, 0.0)
-    edge_wear = g.math("MULTIPLY", g.remap(ed, 0.0, 0.006, 1.0, 0.0), g.remap(g.noise(c.P, 40.0, 4.0), 0.4, 0.62))
-    stitch = g.math("MAXIMUM", seam_stitch, edge_stitch)
+    side_panel = g.mul(g.remap(g.sub(ax, seam_x), 0.0, 0.002), is_body)
+    seam = g.mul(near(ax, seam_x, 0.0012), is_body)
+    piping = g.mul(near(ax, seam_x, 0.0045), is_body)
+    seam_stitch = g.mul(g.mul(g.maxf(near(ax, g.add(seam_x, 0.0065), 0.0008),
+                                     near(ax, g.sub(seam_x, 0.0065), 0.0008)), dashes(P["Z"], 0.0065)), is_body)
+    edge_stitch = g.mul(near(ed, g.mix_float(0.0068, 0.0032, is_strap), 0.0008), stitch_dots(0.0042))
+    stitch = g.maxf(seam_stitch, edge_stitch)
+    burnish = g.remap(ed, 0.0, 0.0035, 1.0, 0.0)               # dark, glossy cut edges
+    rim_wear = g.mul(g.remap(ed, 0.0, 0.007, 1.0, 0.0), aaa.weathering.breakup(c, 40.0, 0.4, 0.62))
 
-    def by_tone(main, strap, bracer):
-        return g.mix_color(g.mix_color(main, strap, is_strap), bracer, is_bracer)
+    def tailor(s, color, side_dark):
+        """Seams, piping, stitching and burnished edges on a leather surface."""
+        col = srgb(color)
+        dark = tuple(v * 0.45 for v in col[:3]) + (1.0,)
+        light = tuple(min(1.0, v * 2.0) for v in col[:3]) + (1.0,)
+        base = s.base
+        if side_dark:
+            base = g.mix_color(base, tuple(v * 0.6 for v in col[:3]) + (1.0,), g.mul(side_panel, 0.7))
+        base = g.mix_color(base, light, g.mul(rim_wear, 0.5))
+        base = g.mix_color(base, dark, g.mul(burnish, 0.6))
+        base = g.mix_color(base, dark, seam)
+        base = g.mix_color(base, srgb(STITCH), stitch)
+        rough = g.mix_float(s.rough, 0.38, g.mul(burnish, 0.7))
+        rough = g.mix_float(rough, 0.82, stitch)
+        height = g.add(s.height, g.add(g.mul(piping, 1.2), g.mul(stitch, 0.7)))
+        height = g.sub(height, g.add(g.mul(seam, 1.5), g.mul(near(ed, 0.0012, 0.0012), 0.8)))
+        return aaa.engine.Surface(base, rough, s.metal, height, s.bump)
 
-    lbase = by_tone(g.mix_color(rgb(0.030, 0.017, 0.010), rgb(0.082, 0.048, 0.027), mottle),
-                    g.mix_color(rgb(0.024, 0.013, 0.007), rgb(0.042, 0.023, 0.012), mottle),
-                    g.mix_color(rgb(0.050, 0.028, 0.015), rgb(0.085, 0.048, 0.026), mottle))
-    lbase = g.mix_color(lbase, rgb(0.020, 0.011, 0.006), g.math("MULTIPLY", side_panel, 0.75))
-    lbase = g.mix_color(lbase, rgb(0.026, 0.014, 0.008), g.math("MULTIPLY", grain, 0.35))
-    lbase = g.mix_color(lbase, rgb(0.018, 0.010, 0.006), g.math("MULTIPLY", stains, 0.45))
-    lbase = g.mix_color(lbase, rgb(0.016, 0.009, 0.005), g.math("MULTIPLY", creases, 0.35))
-    lbase = g.mix_color(lbase, rgb(0.13, 0.085, 0.052), g.math("MULTIPLY", scuff, 0.55))
-    lbase = g.mix_color(lbase, rgb(0.11, 0.075, 0.047), g.math("MULTIPLY", scratch, 0.28))
-    lbase = g.mix_color(lbase, rgb(0.14, 0.092, 0.056), g.math("MULTIPLY", c.edge, 0.7))
-    lbase = g.mix_color(lbase, rgb(0.12, 0.08, 0.05), g.math("MULTIPLY", edge_wear, 0.55))
-    lbase = g.mix_color(lbase, rgb(0.012, 0.007, 0.004), g.math("MULTIPLY", burnish, 0.5))
-    lbase = g.mix_color(lbase, rgb(0.012, 0.007, 0.004), g.math("MULTIPLY", c.cavity, 0.85))
-    lbase = g.mix_color(lbase, rgb(0.012, 0.007, 0.004), seam)
-    lbase = g.mix_color(lbase, rgb(0.11, 0.09, 0.065), stitch)
-    lbase = g.mix_color(lbase, rgb(0.13, 0.115, 0.095), g.math("MULTIPLY", dust, 0.35))
-    lrough = g.math("ADD", 0.58, g.math("MULTIPLY", grain, 0.14))
-    lrough = g.mix_float(lrough, 0.42, g.math("MULTIPLY", stains, 0.5))
-    lrough = g.mix_float(lrough, 0.36, g.math("MULTIPLY", c.edge, 0.7))
-    lrough = g.mix_float(lrough, 0.34, g.math("MULTIPLY", burnish, 0.6))
-    lrough = g.mix_float(lrough, 0.78, g.math("MULTIPLY", scuff, 0.6))
-    lrough = g.mix_float(lrough, 0.74, g.math("MULTIPLY", scratch, 0.6))
-    lrough = g.mix_float(lrough, 0.85, c.cavity)
-    lrough = g.mix_float(lrough, 0.80, stitch)
-    lrough = g.mix_float(lrough, 0.88, g.math("MULTIPLY", dust, 0.6))
-    lheight = g.math("ADD", g.math("MULTIPLY", grain, 0.35),
-                     g.math("ADD", g.math("MULTIPLY", stitch, 0.7), g.math("MULTIPLY", piping, 1.4)))
-    lheight = g.math("SUBTRACT", lheight,
-                     g.math("ADD", g.math("MULTIPLY", creases, 0.55),
-                            g.math("ADD", g.math("MULTIPLY", seam, 1.6),
-                                   g.math("ADD", g.math("MULTIPLY", scratch, 0.45),
-                                          g.math("MULTIPLY", near(ed, 0.0012, 0.0012), 0.8)))))
-    leather = wt.Surface(lbase, lrough, 0.0, lheight, 0.00022)
+    main = tailor(L.leather(c, color=LEATHER_MAIN, wear=0.55, dirt=0.55), LEATHER_MAIN, True)
+    strap = tailor(L.leather(c, color=LEATHER_STRAP, wear=0.6, dirt=0.5, scale=1.15), LEATHER_STRAP, False)
+    bracer = tailor(L.leather(c, color=LEATHER_BRACER, wear=0.65, dirt=0.5), LEATHER_BRACER, False)
 
-    # ---- blackened steel: pauldrons, buckles, rivets -----------------------------------------
-    hammer = g.remap(g.noise(c.P, 55.0, 2.0), 0.3, 0.7)          # soft hammer dents
-    tone_s = g.remap(g.noise(c.P, 30.0, 4.0), 0.4, 0.65)
-    rust = g.math("MULTIPLY", g.remap(g.noise(c.P, 18.0, 5.0, 0.65), 0.6, 0.74),
-                  g.math("ADD", g.math("MULTIPLY", c.cavity, 0.8), 0.25))
-    # fleur-de-lis on the pauldron caps, placed in the plate's own (phi, alpha) coordinates:
-    # pc = (phi * r, v) with v = CREST_V at CREST_ALPHA on the cap's outward face; the
-    # crest is centred there with its tip towards the neck.
+    # ---- blackened steel: pauldrons, buckles, rivets ----------------------------------------
+    # Plates are only 2 mm thick, so the AO-based edge mask would flag them everywhere;
+    # their worn edges come from the distance to the plate rim instead.
+    steel_edge = g.mul(g.remap(ed, 0.0, 0.005, 1.0, 0.0), aaa.weathering.breakup(c, 30.0, 0.35, 0.6))
+    steel = L.steel_blackened(c.with_masks(edge=steel_edge), wear=0.55, dirt=0.45, rust=0.3)
     crest_uv = g.node("ShaderNodeCombineXYZ", {
-        "X": g.math("ADD", g.math("DIVIDE", pc["X"], 0.085), 0.5),
-        "Y": g.math("DIVIDE", g.math("SUBTRACT", 0.1325, pc["Y"]), 0.085)}).outputs["Vector"]
+        "X": g.add(g.math("DIVIDE", pc["X"], CREST_SIZE), 0.5),
+        "Y": g.math("DIVIDE", g.sub(CREST_V + CREST_SIZE / 2, pc["Y"]), CREST_SIZE)}).outputs["Vector"]
     crest_img = bpy.data.images.load(str(CREST), check_existing=True)
     crest_img.colorspace_settings.name = "Non-Color"
-    crest = g.math("MULTIPLY", g.image(crest_img, crest_uv, "CLIP").outputs["Color"], c.is_part(STEEL))
-    crest_outline = g.math("MULTIPLY", g.math("MULTIPLY", crest, g.math("SUBTRACT", 1.0, crest)), 4.0)
-    etched = g.math("MULTIPLY", near(ed, 0.009, 0.0011), c.is_part(STEEL))   # etched border on the plates
-    # Plates are only 2 mm thick, so the AO-based edge mask would flag them
-    # everywhere; worn bright metal comes from the distance to the plate rim.
-    steel_edge = g.remap(ed, 0.0, 0.0045, 1.0, 0.0)
-    sbase = g.mix_color(rgb(0.040, 0.040, 0.043), rgb(0.080, 0.080, 0.084), tone_s)
-    sbase = g.mix_color(sbase, rgb(0.030, 0.030, 0.032), g.math("MULTIPLY", hammer, 0.25))
-    sbase = g.mix_color(sbase, rgb(0.28, 0.28, 0.29), g.math("MULTIPLY", steel_edge, 0.85))
-    sbase = g.mix_color(sbase, rgb(0.30, 0.30, 0.31), g.math("MULTIPLY", crest, 0.9))
-    sbase = g.mix_color(sbase, rgb(0.015, 0.015, 0.016), g.math("MAXIMUM", crest_outline, etched))
-    sbase = g.mix_color(sbase, rgb(0.11, 0.05, 0.022), g.math("MULTIPLY", rust, 0.75))
-    sbase = g.mix_color(sbase, rgb(0.02, 0.018, 0.016), g.math("MULTIPLY", c.cavity, 0.8))
-    srough = g.math("ADD", 0.46, g.math("MULTIPLY", tone_s, 0.14))
-    srough = g.mix_float(srough, 0.30, steel_edge)
-    srough = g.mix_float(srough, 0.26, crest)
-    srough = g.mix_float(srough, 0.85, rust)
-    srough = g.mix_float(srough, 0.75, c.cavity)
-    smetal = g.math("SUBTRACT", wt.metal_with_grime(c), g.math("MULTIPLY", rust, 0.7))
-    sheight = g.math("ADD", g.math("MULTIPLY", hammer, 0.30),
-                     g.math("SUBTRACT", g.math("MULTIPLY", crest, 2.2),
-                            g.math("MULTIPLY", etched, 1.2)))
-    steel = wt.Surface(sbase, srough, smetal, sheight, 0.00012)
+    crest = g.mul(g.image(crest_img, crest_uv, "CLIP").outputs["Color"], c.is_value(part, STEEL))
+    outline = g.clamp01(g.mul(g.mul(crest, g.inv(crest)), 4.0))
+    etched = g.mul(near(ed, 0.009, 0.0011), c.is_value(part, STEEL))      # etched border
+    inlay = g.maxf(outline, etched)
+    sbase = g.mix_color(steel.base, srgb("#c4c6c9"), g.mul(crest, 0.9))     # polished embossed crest
+    sbase = g.mix_color(sbase, srgb("#2b2826"), inlay)                      # blackened engraving
+    srough = g.mix_float(g.mix_float(steel.rough, 0.22, crest), 0.6, inlay)
+    smetal = g.mul(g.maxf(steel.metal, g.smooth(crest, 0.4, 0.6)), g.inv(inlay))
+    sheight = g.sub(g.add(steel.height, g.mul(crest, 1.6)), g.mul(inlay, 0.8))
+    steel = aaa.engine.Surface(sbase, srough, smetal, sheight, steel.bump)
 
-    # ---- quilted wool gambeson -----------------------------------------------------------
-    channel = g.math("ABSOLUTE", g.math("SINE", g.math("MULTIPLY", pc["X"], math.pi / 0.026)))
-    quilt_line = g.remap(channel, 0.0, 0.16, 1.0, 0.0)
-    folds = g.remap(g.noise(g.mapping(c.P, (8, 8, 40)), 1.0, 4.0, 0.55), 0.35, 0.65)
-    weave = g.remap(g.noise(g.mapping(c.P, (2600, 2600, 2600)), 1.0, 2.0), 0.35, 0.65)
-    wool_var = g.remap(g.noise(c.P, 14.0, 3.0), 0.35, 0.65)
-    cbase = g.mix_color(rgb(0.034, 0.033, 0.022), rgb(0.066, 0.062, 0.042), wool_var)
-    cbase = g.mix_color(cbase, rgb(0.034, 0.035, 0.025), g.math("MULTIPLY", weave, 0.3))
-    cbase = g.mix_color(cbase, rgb(0.022, 0.023, 0.016), g.math("MULTIPLY", quilt_line, 0.8))
-    cbase = g.mix_color(cbase, rgb(0.026, 0.026, 0.019), g.math("MULTIPLY", g.math("SUBTRACT", 1.0, folds), 0.35))
-    cbase = g.mix_color(cbase, rgb(0.018, 0.018, 0.013), g.math("MULTIPLY", c.cavity, 0.85))
-    cbase = g.mix_color(cbase, rgb(0.11, 0.10, 0.085), g.math("MULTIPLY", g.math("MULTIPLY", c.edge, 0.5), wool_var))
-    crough = g.mix_float(0.86, 0.95, quilt_line)
-    cheight = g.math("ADD", g.math("ADD", g.math("POWER", channel, 0.5), g.math("MULTIPLY", weave, 0.15)),
-                     g.math("MULTIPLY", folds, 0.9))
-    cloth = wt.Surface(cbase, crough, 0.0, cheight, 0.0006)
+    # ---- quilted wool gambeson and riveted mail (2D pattern coords from the build) ---------
+    cloth = L.wool(c, color=WOOL, quilted=True, channel=0.026, channel_axis="X", P2=pc_vec, wear=0.4, dirt=0.55)
+    mail = L.chainmail(c, ring=0.0085, rust=0.45, dirt=0.55, P2=pc_vec)
 
-    # ---- riveted mail -------------------------------------------------------------------
-    def ring_grid(offset):
-        m = g.node("ShaderNodeMapping", {"Vector": g.node("ShaderNodeCombineXYZ", {"X": pc["X"], "Y": pc["Y"]}).outputs["Vector"],
-                                         "Scale": (1 / 0.0085, 1 / 0.0085, 1.0), "Location": (offset, offset, 0.0)})
-        vor = g.node("ShaderNodeTexVoronoi", {"Vector": m.outputs["Vector"], "Scale": 1.0, "Randomness": 0.0},
-                     voronoi_dimensions="2D")
-        d = vor.outputs["Distance"]
-        ring = g.remap(g.math("ABSOLUTE", g.math("SUBTRACT", d, 0.44)), 0.0, 0.16, 1.0, 0.0)
-        return g.math("POWER", ring, 0.6)            # rounded wire profile
-
-    rings = g.math("MAXIMUM", ring_grid(0.0), ring_grid(0.5))
-    mrust = g.math("MULTIPLY", g.remap(g.noise(c.P, 30.0, 4.0), 0.5, 0.68), g.math("SUBTRACT", 1.15, rings))
-    ring_var = g.remap(g.noise(c.P, 160.0, 1.0), 0.3, 0.7)
-    mbase = g.mix_color(rgb(0.003, 0.003, 0.003), g.mix_color(rgb(0.075, 0.075, 0.078), rgb(0.15, 0.15, 0.155), ring_var), rings)
-    mbase = g.mix_color(mbase, rgb(0.085, 0.040, 0.017), g.math("MULTIPLY", mrust, 0.65))
-    mbase = g.mix_color(mbase, rgb(0.012, 0.012, 0.012), g.math("MULTIPLY", c.cavity, 0.7))
-    mrough = g.mix_float(g.mix_float(0.85, 0.40, rings), 0.88, g.math("MULTIPLY", mrust, 0.7))
-    mmetal = g.math("MULTIPLY", rings, g.math("SUBTRACT", 1.0, g.math("MULTIPLY", mrust, 0.6)))
-    mail = wt.Surface(mbase, mrough, mmetal, rings, 0.0012)
-
-    return [(None, leather),
-            (c.is_part(STEEL), steel),
-            (c.is_part(CLOTH), cloth),
-            (c.is_part(MAIL), mail)]
+    return [(None, main), (is_strap, strap), (is_bracer, bracer),
+            (c.is_value(part, STEEL), steel), (c.is_value(part, CLOTH), cloth), (c.is_value(part, MAIL), mail)]
 
 
 # --- skinning, UVs, export -------------------------------------------------------------------
@@ -1162,7 +1134,7 @@ def render_previews(body_fbx):
     body_mesh = next(o for o in bpy.context.scene.objects if o.type == "MESH")
     bpy.ops.import_scene.fbx(filepath=str(OUT_DIR / f"{ASSET_NAME}.fbx"))
     garment = next(o for o in bpy.context.scene.objects if o.type == "MESH" and o is not body_mesh)
-    wt.assign_final_material(garment, OUT_DIR / "Textures", "LeatherJerkin")
+    aaa.engine.assign_baked_material(garment, OUT_DIR / "Textures", "LeatherJerkin")
     clay = kit.make_material("M_Clay", (0.50, 0.45, 0.42), 0.0, 0.55)
     body_mesh.data.materials.clear()
     body_mesh.data.materials.append(clay)
@@ -1203,8 +1175,13 @@ def main():
         skin(body, obj)
         print("Unwrapping...")
         unwrap(obj)
-        wt.TEX_RES = args.res
-        wt.texture_weapon(obj, OUT_DIR / "Textures", "LeatherJerkin", jerkin_layers, bake=not args.no_bake)
+        tex_dir = OUT_DIR / "Textures"
+        if not args.no_bake or not (tex_dir / "T_LeatherJerkin_BaseColor.png").exists():
+            # 2.5 cm contact shadows: enough for straps and folds, without the
+            # hidden inner layers of the garment going black
+            aaa.engine.bake(obj, tex_dir, "LeatherJerkin", jerkin_layers, res=args.res,
+                            ao_distance=0.025, export_height=False)
+        aaa.engine.assign_baked_material(obj, tex_dir, "LeatherJerkin")
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         bpy.ops.wm.save_as_mainfile(filepath=str(OUT_DIR / f"{ASSET_NAME}.blend"), compress=True)
         ck.export_skeletal(body, obj, OUT_DIR / f"{ASSET_NAME}.fbx")

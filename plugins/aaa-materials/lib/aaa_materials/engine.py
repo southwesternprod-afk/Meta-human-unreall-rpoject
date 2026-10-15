@@ -223,7 +223,7 @@ class Context:
     attr(name)  any float mesh attribute (e.g. a "part" id written by a build script)
     """
 
-    def __init__(self, g, name, res, tileable=False, mask_scale=1.0):
+    def __init__(self, g, name, res, tileable=False, mask_scale=1.0, ao_distance=None):
         self.g, self.name, self.res, self.tileable = g, name, res, tileable
         tc = g.node("ShaderNodeTexCoord")
         self.P = tc.outputs["Object"]
@@ -246,7 +246,7 @@ class Context:
             s = mask_scale
             edge = g.remap(g.math("SUBTRACT", 1.0, g.ao(0.0025 * s, inside=True)), 0.12, 0.55)
             cavity = g.remap(g.math("SUBTRACT", 1.0, g.ao(0.005 * s)), 0.08, 0.5)
-            occlusion = g.ao(0.05 * s)
+            occlusion = g.ao(0.05 * s if ao_distance is None else ao_distance)
             self.masks_emit = g.node("ShaderNodeEmission", {
                 "Color": g.node("ShaderNodeCombineColor", {"Red": edge, "Green": cavity,
                                                            "Blue": occlusion}).outputs["Color"]})
@@ -256,6 +256,16 @@ class Context:
             self.edge = sep.outputs["Red"]
             self.cavity = sep.outputs["Green"]
             self.ao = sep.outputs["Blue"]
+
+    def with_masks(self, edge=None, cavity=None, ao=None, up=None):
+        """A copy of this context with some masks replaced - e.g. an edge mask from
+        a distance-to-rim attribute for plates too thin for the baked AO edge."""
+        import copy
+        c = copy.copy(self)
+        for key, value in (("edge", edge), ("cavity", cavity), ("ao", ao), ("up", up)):
+            if value is not None:
+                setattr(c, key, value)
+        return c
 
     def attr(self, name):
         return self.g.node("ShaderNodeAttribute", attribute_name=name).outputs["Fac"]
@@ -269,8 +279,27 @@ class Context:
 
 
 # --- material assembly ----------------------------------------------------------
-def combine(g, c, layers):
-    """Blend ``[(mask, Surface), ...]`` (first mask None) into bake shaders."""
+# Linear luminance limits matching validate.py: non-metal sRGB 30..240, metal >= ~175.
+SAFE_DIELECTRIC = (0.0135, 0.85)
+SAFE_METAL_MIN = 0.42
+
+
+def pbr_safe(g, base, metal):
+    """Rescale albedo brightness (keeping hue) into the PBR-valid range for its
+    metalness, like a 'PBR safe colour' filter in texturing tools."""
+    lum = g.node("ShaderNodeRGBToBW", {"Color": base}).outputs[0]
+    lum = g.maxf(lum, 1e-4)
+    lo = g.mix_float(SAFE_DIELECTRIC[0], SAFE_METAL_MIN, metal)
+    k = g.maxf(1.0, g.math("DIVIDE", lo, lum))                       # lift too-dark values
+    hi = g.mix_float(SAFE_DIELECTRIC[1], 1.0, metal)                 # metals may be brighter
+    k = g.minf(k, g.math("DIVIDE", hi, lum))                         # tame too-bright ones
+    scale = g.node("ShaderNodeCombineColor", {"Red": k, "Green": k, "Blue": k}).outputs["Color"]
+    return g.tint(base, scale)
+
+
+def combine(g, c, layers, safe=True):
+    """Blend ``[(mask, Surface), ...]`` (first mask None) into bake shaders.
+    ``safe`` keeps the final albedo inside PBR ranges."""
     first = layers[0][1]
     base, rough, metal, height = first.base, first.rough, first.metal, first.height
 
@@ -287,6 +316,8 @@ def combine(g, c, layers):
         normal = g.mix_vector(normal, bump(s), mask)
         hscaled = g.mix_float(hscaled, g.mul(s.height, s.bump), mask)
     normal = g.node("ShaderNodeVectorMath", {0: normal}, operation="NORMALIZE").outputs["Vector"]
+    if safe:
+        base = pbr_safe(g, base, g.clamp01(metal))
     hcm = g.add(g.mul(hscaled, 100.0), 0.5)
     return {
         "masks": c.masks_emit,
@@ -301,7 +332,7 @@ def combine(g, c, layers):
     }
 
 
-def new_bake_material(obj, name, res, tileable=False, mask_scale=1.0):
+def new_bake_material(obj, name, res, tileable=False, mask_scale=1.0, ao_distance=None):
     mat = bpy.data.materials.new(f"M_{name}_Bake")
     mat.use_nodes = True
     g = Graph(mat)
@@ -309,7 +340,7 @@ def new_bake_material(obj, name, res, tileable=False, mask_scale=1.0):
     out = g.node("ShaderNodeOutputMaterial")
     obj.data.materials.clear()
     obj.data.materials.append(mat)
-    return g, out, Context(g, name, res, tileable, mask_scale)
+    return g, out, Context(g, name, res, tileable, mask_scale, ao_distance)
 
 
 def bake_pass(g, out, shader_node, target_img, bake_type, samples):
@@ -358,7 +389,7 @@ def make_seamless(arr, band=0.25):
 
 
 def bake(obj, out_dir, name, layers_fn, res=2048, tileable=False, mask_scale=1.0,
-         samples=4, export_height=None):
+         samples=4, export_height=None, ao_distance=None, safe=True):
     """Bake ``layers_fn(context) -> [(mask, Surface), ...]`` on ``obj`` (unwrapped).
     Returns {key: Path}."""
     out_dir = Path(out_dir)
@@ -371,8 +402,8 @@ def bake(obj, out_dir, name, layers_fn, res=2048, tileable=False, mask_scale=1.0
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
 
-    g, out, c = new_bake_material(obj, name, res, tileable, mask_scale)
-    shaders = combine(g, c, layers_fn(c))
+    g, out, c = new_bake_material(obj, name, res, tileable, mask_scale, ao_distance)
+    shaders = combine(g, c, layers_fn(c), safe)
     names = texture_names(name)
     export_height = tileable if export_height is None else export_height
 
