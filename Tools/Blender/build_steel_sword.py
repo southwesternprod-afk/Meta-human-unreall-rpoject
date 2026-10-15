@@ -2,13 +2,15 @@
 
 Run headless with the `bpy` module (pip install bpy) or inside Blender:
 
-    python3 Tools/Blender/build_steel_sword.py            # build + export
-    python3 Tools/Blender/build_steel_sword.py --render   # also render previews
+    python3 Tools/Blender/build_steel_sword.py              # build, bake textures, export
+    python3 Tools/Blender/build_steel_sword.py --render     # also render previews
+    python3 Tools/Blender/build_steel_sword.py --no-bake    # reuse existing textures
 
 Outputs go to Art/Weapons/SteelSword/:
     SM_SteelSword.fbx   - static mesh + UCX_ collision + SOCKET_ empties (Unreal)
-    SM_SteelSword.glb   - mesh only (web preview / other engines)
+    SM_SteelSword.glb   - textured mesh (web preview / other engines)
     SM_SteelSword.blend - source scene
+    Textures/*.png      - PBR texture set (see sword_textures.py)
     Renders/*.png       - preview renders (with --render)
 
 Conventions: metres in Blender (exported so 1 m = 100 uu in Unreal), Z up,
@@ -24,8 +26,12 @@ import bpy  # must come before bmesh when running as a module
 import bmesh
 from mathutils import Vector
 
+import sword_textures
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = REPO_ROOT / "Art" / "Weapons" / "SteelSword"
+TEX_DIR = OUT_DIR / "Textures"
+ENGRAVING = OUT_DIR / "Source" / "T_SteelSword_EngravingMask.png"
 ASSET_NAME = "SM_SteelSword"
 
 # --- Dimensions (metres) ---------------------------------------------------
@@ -99,6 +105,11 @@ def hull_object(name, points):
     return obj
 
 
+def set_point_attr(obj, name, values):
+    attr = obj.data.attributes.new(name, "FLOAT", "POINT")
+    attr.data.foreach_set("value", values)
+
+
 def make_material(name, color, metallic, roughness):
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -169,7 +180,13 @@ def build_blade():
         z = BLADE_START + s * BLADE_LEN
         rings.append([Vector((x, y, z)) for x, y in blade_section(w, t, fuller, ricasso)])
     tip = Vector((0, 0, BLADE_START + BLADE_LEN))
-    return loft("Blade", rings, cap_start=True, tip=tip, sharp_cols=blade_sharp_cols())
+    blade = loft("Blade", rings, cap_start=True, tip=tip, sharp_cols=blade_sharp_cols())
+    # 0 at the spine of the blade, 1 at the cutting edge (drives the polished edge
+    # and fuller masks in the textures).
+    top = BLADE_XS + [-x for x in reversed(BLADE_XS[:-1])]
+    profile_u = [abs(x) / 0.5 for x in top + list(reversed(top[1:-1]))]
+    set_point_attr(blade, "edgeu", profile_u * len(rings) + [0.0])
+    return blade
 
 
 OCTAGON = [(1, 0.45), (0.45, 1), (-0.45, 1), (-1, 0.45),
@@ -289,22 +306,69 @@ def finish_shading(obj, angle_deg=30):
     bm.free()
 
 
+def bevel_and_normals(obj):
+    """Micro-bevel the hard metal edges so they catch light, then weight the
+    normals towards large faces (the usual game-asset "mid-poly" finish)."""
+    bev = obj.modifiers.new("MicroBevel", "BEVEL")
+    bev.limit_method = "ANGLE"
+    bev.angle_limit = math.radians(35)
+    bev.width = 0.00035
+    bev.segments = 2
+    bev.use_clamp_overlap = True
+    bev.harden_normals = False
+    wn = obj.modifiers.new("WeightedNormals", "WEIGHTED_NORMAL")
+    wn.keep_sharp = True
+    wn.weight = 50
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    for mod in list(obj.modifiers):
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+
+
 def unwrap(obj):
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.01)
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.004)
     bpy.ops.object.mode_set(mode="OBJECT")
+    planar_blade_uvs(obj)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.select_all(action="SELECT")
+    bpy.ops.uv.pack_islands(rotate=True, rotate_method="AXIS_ALIGNED", margin=0.003)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def planar_blade_uvs(obj, splits=2):
+    """Project each face of the blade flat onto its own islands, cut into
+    `splits` lengthwise pieces so the long blade packs tightly into a square."""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    uv = bm.loops.layers.uv.active
+    part = bm.verts.layers.float["part"]
+    seg_len = BLADE_LEN / splits
+    for f in bm.faces:
+        if any(v[part] > 0.5 for v in f.verts):
+            continue
+        side = 1 if f.normal.y >= 0 else -1
+        seg = min(splits - 1, max(0, int((f.calc_center_median().z - BLADE_START) // seg_len)))
+        # Offset each island so they don't touch before packing.
+        off_u = (seg * 2 + (0 if side > 0 else 1)) * 0.2
+        for loop in f.loops:
+            co = loop.vert.co
+            loop[uv].uv = (side * co.x + off_u, co.z - BLADE_START - seg * seg_len)
+    bm.to_mesh(obj.data)
+    bm.free()
 
 
 def build_sword():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
-    steel = make_material("M_SwordBlade_Steel", (0.78, 0.78, 0.80), 1.0, 0.16)
-    fittings = make_material("M_SwordFittings_Steel", (0.48, 0.48, 0.50), 1.0, 0.32)
-    leather = make_material("M_SwordGrip_Leather", (0.065, 0.028, 0.013), 0.0, 0.6)
+    # Part IDs feed the texture bake (one texture set for the whole sword).
+    steel, fittings, leather = 0.0, 1.0, 2.0
 
     parts = [
         (build_blade(), steel),
@@ -316,11 +380,15 @@ def build_sword():
         (build_pommel(), fittings),
         (build_peen(), fittings),
     ]
-    for obj, mat in parts:
-        obj.data.materials.append(mat)
+    for obj, part_id in parts:
+        n = len(obj.data.vertices)
+        set_point_attr(obj, "part", [part_id] * n)
+        if "edgeu" not in obj.data.attributes:
+            set_point_attr(obj, "edgeu", [0.0] * n)
 
     sword = join([p[0] for p in parts], ASSET_NAME)
     finish_shading(sword)
+    bevel_and_normals(sword)
     unwrap(sword)
 
     # Simple convex collision: blade, guard, handle (Unreal UCX_ convention).
@@ -369,6 +437,7 @@ def export(sword, collisions):
         object_types={"MESH", "EMPTY"},
         apply_scale_options="FBX_SCALE_UNITS",
         mesh_smooth_type="FACE",
+        path_mode="STRIP",
         add_leaf_bones=False,
         bake_anim=False,
     )
@@ -475,10 +544,13 @@ def render_previews(sword):
     render_view(renders / "SteelSword_Hilt.png", hilt + Vector((0.12, -0.32, 0.22)), hilt + Vector((0.0, 0.0, 0.0)), 70)
     guard = sword.matrix_world @ Vector((0, 0, 0.12))
     render_view(renders / "SteelSword_Guard.png", guard + Vector((-0.20, -0.22, 0.20)), guard, 70)
+    words = sword.matrix_world @ Vector((0, 0, 0.30))
+    render_view(renders / "SteelSword_Inscription.png", words + Vector((0.05, -0.20, 0.24)), words, 70)
 
 
 if __name__ == "__main__":
     sword_obj, ucx = build_sword()
+    sword_textures.texture_sword(sword_obj, TEX_DIR, ENGRAVING, bake="--no-bake" not in sys.argv)
     export(sword_obj, ucx)
     me = sword_obj.data
     print(f"{ASSET_NAME}: {len(me.vertices)} verts, {len(me.polygons)} faces, "
