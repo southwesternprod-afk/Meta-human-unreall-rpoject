@@ -772,7 +772,7 @@ def jerkin_layers(c):
     lbase = g.mix_color(lbase, rgb(0.018, 0.010, 0.006), g.math("MULTIPLY", stains, 0.45))
     lbase = g.mix_color(lbase, rgb(0.016, 0.009, 0.005), g.math("MULTIPLY", creases, 0.35))
     lbase = g.mix_color(lbase, rgb(0.13, 0.085, 0.052), g.math("MULTIPLY", scuff, 0.55))
-    lbase = g.mix_color(lbase, rgb(0.15, 0.10, 0.062), g.math("MULTIPLY", scratch, 0.5))
+    lbase = g.mix_color(lbase, rgb(0.11, 0.075, 0.047), g.math("MULTIPLY", scratch, 0.28))
     lbase = g.mix_color(lbase, rgb(0.14, 0.092, 0.056), g.math("MULTIPLY", c.edge, 0.6))
     lbase = g.mix_color(lbase, rgb(0.12, 0.08, 0.05), g.math("MULTIPLY", edge_wear, 0.55))
     lbase = g.mix_color(lbase, rgb(0.012, 0.007, 0.004), g.math("MULTIPLY", burnish, 0.5))
@@ -817,25 +817,25 @@ def jerkin_layers(c):
     # Plates are only 2 mm thick, so the AO-based edge mask would flag them
     # everywhere; worn bright metal comes from the distance to the plate rim.
     steel_edge = g.math("MAXIMUM", g.remap(ed, 0.0, 0.0045, 1.0, 0.0),
-                        g.math("MULTIPLY", hammer, g.math("MULTIPLY", scratch, 0.5)))
+                        g.math("MULTIPLY", hammer, g.math("MULTIPLY", scratch, 0.15)))
     sbase = g.mix_color(rgb(0.050, 0.050, 0.054), rgb(0.095, 0.095, 0.10), tone_s)
     sbase = g.mix_color(sbase, rgb(0.035, 0.035, 0.038), g.math("MULTIPLY", hammer, 0.35))
     sbase = g.mix_color(sbase, rgb(0.42, 0.42, 0.43), g.math("MULTIPLY", steel_edge, 0.9))
-    sbase = g.mix_color(sbase, rgb(0.30, 0.30, 0.31), g.math("MULTIPLY", scratch, 0.6))
+    sbase = g.mix_color(sbase, rgb(0.22, 0.22, 0.23), g.math("MULTIPLY", scratch, 0.22))
     sbase = g.mix_color(sbase, rgb(0.24, 0.24, 0.25), g.math("MULTIPLY", crest, 0.9))
     sbase = g.mix_color(sbase, rgb(0.015, 0.015, 0.016), g.math("MAXIMUM", crest_outline, etched))
     sbase = g.mix_color(sbase, rgb(0.11, 0.05, 0.022), g.math("MULTIPLY", rust, 0.75))
     sbase = g.mix_color(sbase, rgb(0.02, 0.018, 0.016), g.math("MULTIPLY", c.cavity, 0.8))
     srough = g.math("ADD", 0.46, g.math("MULTIPLY", tone_s, 0.14))
     srough = g.mix_float(srough, 0.24, steel_edge)
-    srough = g.mix_float(srough, 0.38, g.math("MULTIPLY", scratch, 0.6))
+    srough = g.mix_float(srough, 0.38, g.math("MULTIPLY", scratch, 0.25))
     srough = g.mix_float(srough, 0.30, crest)
     srough = g.mix_float(srough, 0.85, rust)
     srough = g.mix_float(srough, 0.75, c.cavity)
     smetal = g.math("SUBTRACT", wt.metal_with_grime(c), g.math("MULTIPLY", rust, 0.7))
     sheight = g.math("ADD", g.math("MULTIPLY", hammer, 0.45),
                      g.math("SUBTRACT", g.math("MULTIPLY", crest, 2.2),
-                            g.math("ADD", g.math("MULTIPLY", scratch, 0.4), g.math("MULTIPLY", etched, 1.2))))
+                            g.math("ADD", g.math("MULTIPLY", scratch, 0.15), g.math("MULTIPLY", etched, 1.2))))
     steel = wt.Surface(sbase, srough, smetal, sheight, 0.00012)
 
     # ---- quilted wool gambeson -----------------------------------------------------------
