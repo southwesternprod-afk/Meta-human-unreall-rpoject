@@ -362,8 +362,8 @@ def render_previews(axe):
     def at(x, z):
         return axe.matrix_world @ Vector((x, 0, z))
 
-    mid = at(0.07, 0.30)
-    kit.render_view(renders / "SteelAxe_Hero.png", mid + Vector((0.10, -0.85, 0.80)), mid, 40)
+    mid = at(0.08, 0.34)
+    kit.render_view(renders / "SteelAxe_Hero.png", mid + Vector((0.10, -0.95, 0.92)), mid, 40)
     head = at(0.07, 0.575)
     kit.render_view(renders / "SteelAxe_Head.png", head + Vector((0.12, -0.30, 0.34)), head, 55)
     grip = at(0.0, 0.0)
