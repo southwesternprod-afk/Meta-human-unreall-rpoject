@@ -770,7 +770,10 @@ def buckle(center, normal, along, width, height, bar=0.0028):
 
 
 # --- pauldrons -----------------------------------------------------------------------
-CREST_ALPHA = math.radians(31)   # crest centre, measured down from the top of the cap
+# The cap faces mostly upwards, so the crest sits on its front-facing slope where it
+# is seen from the front, like the emblem in the reference.
+CREST_ALPHA = math.radians(40)   # crest centre, measured down from the top of the cap
+CREST_PHI = math.radians(62)     # ... and around it towards the front
 CREST_V = 0.090                  # pattern-space v of the crest centre (see jerkin_layers)
 def build_pauldrons(body):
     pieces = []
@@ -815,7 +818,10 @@ def build_pauldrons(body):
                 for j, v in enumerate(row):
                     # v is anchored so the crest (centred at v = CREST_V) sits at CREST_ALPHA,
                     # the outward face of the cap, whatever the plate's radius
-                    p.pc[v] = (phis[j] * (R + extra), (alphas[i] - CREST_ALPHA) * (R + extra) + CREST_V)
+                    # u: arc length around the cap from the crest centre (positive towards the
+                    # front on both shoulders)
+                    p.pc[v] = ((side * phis[j] - CREST_PHI) * (R + extra) * math.sin(CREST_ALPHA),
+                               (alphas[i] - CREST_ALPHA) * (R + extra) + CREST_V)
             pieces.append(p)
             # rivets at both ends of each overlap
             if name != "Cap":
@@ -1049,8 +1055,8 @@ def jerkin_layers(c):
     # pc = (phi * r, v) with v = CREST_V at CREST_ALPHA on the cap's outward face; the
     # crest is centred there with its tip towards the neck.
     crest_uv = g.node("ShaderNodeCombineXYZ", {
-        "X": g.math("ADD", g.math("DIVIDE", pc["X"], 0.105), 0.5),
-        "Y": g.math("DIVIDE", g.math("SUBTRACT", 0.1425, pc["Y"]), 0.105)}).outputs["Vector"]
+        "X": g.math("ADD", g.math("DIVIDE", pc["X"], 0.085), 0.5),
+        "Y": g.math("DIVIDE", g.math("SUBTRACT", 0.1325, pc["Y"]), 0.085)}).outputs["Vector"]
     crest_img = bpy.data.images.load(str(CREST), check_existing=True)
     crest_img.colorspace_settings.name = "Non-Color"
     crest = g.math("MULTIPLY", g.image(crest_img, crest_uv, "CLIP").outputs["Color"], c.is_part(STEEL))
