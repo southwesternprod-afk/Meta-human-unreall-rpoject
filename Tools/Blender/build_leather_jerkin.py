@@ -667,9 +667,9 @@ def jerkin_layers(c):
     grain = g.remap(g.math("ADD", g.math("MULTIPLY", g.voronoi(c.P, 1400.0), 0.7),
                            g.math("MULTIPLY", g.noise(c.P, 450.0, 4.0), 0.5)), 0.2, 0.8)
     mottle = g.remap(g.noise(c.P, 9.0, 4.0), 0.35, 0.68)
-    creases = g.math("MULTIPLY", g.remap(g.voronoi(g.mapping(c.P, (30, 30, 12)), 1.0, "DISTANCE_TO_EDGE"),
-                                         0.0, 0.05, 1.0, 0.0),
-                     g.remap(g.noise(c.P, 5.0, 2.0), 0.45, 0.62))
+    crease_noise = g.noise(g.mapping(c.P, (60, 60, 14)), 1.0, 6.0, 0.6)
+    creases = g.math("MULTIPLY", g.remap(g.math("ABSOLUTE", g.math("SUBTRACT", crease_noise, 0.5)), 0.0, 0.035, 1.0, 0.0),
+                     g.remap(g.noise(c.P, 4.0, 2.0), 0.5, 0.66))
     # panel seams down the front and back of the jerkin, with stitching either side
     is_body = g.math("MULTIPLY", g.math("LESS_THAN", P["Z"], 1.47), g.math("LESS_THAN", tone, 0.5))
     ax = g.math("ABSOLUTE", P["X"])
@@ -695,7 +695,7 @@ def jerkin_layers(c):
                     g.mix_color(rgb(0.042, 0.022, 0.011), rgb(0.070, 0.038, 0.019), mottle),
                     g.mix_color(rgb(0.095, 0.052, 0.027), rgb(0.150, 0.085, 0.045), mottle))
     lbase = g.mix_color(lbase, rgb(0.05, 0.027, 0.014), g.math("MULTIPLY", grain, 0.35))
-    lbase = g.mix_color(lbase, rgb(0.035, 0.018, 0.009), g.math("MULTIPLY", creases, 0.6))
+    lbase = g.mix_color(lbase, rgb(0.035, 0.018, 0.009), g.math("MULTIPLY", creases, 0.3))
     lbase = g.mix_color(lbase, rgb(0.20, 0.13, 0.08), g.math("MULTIPLY", scratch, 0.45))
     lbase = g.mix_color(lbase, rgb(0.19, 0.12, 0.07), g.math("MULTIPLY", c.edge, 0.55))
     lbase = g.mix_color(lbase, rgb(0.02, 0.011, 0.006), g.math("MULTIPLY", c.cavity, 0.85))
@@ -707,7 +707,7 @@ def jerkin_layers(c):
     lrough = g.mix_float(lrough, 0.80, c.cavity)
     lrough = g.mix_float(lrough, 0.75, stitch)
     lheight = g.math("SUBTRACT", g.math("ADD", g.math("MULTIPLY", grain, 0.35), g.math("MULTIPLY", stitch, 0.6)),
-                     g.math("ADD", g.math("MULTIPLY", creases, 0.8),
+                     g.math("ADD", g.math("MULTIPLY", creases, 0.5),
                             g.math("ADD", g.math("MULTIPLY", seam, 1.2), g.math("MULTIPLY", scratch, 0.4))))
     leather = wt.Surface(lbase, lrough, 0.0, lheight, 0.00022)
 
@@ -721,13 +721,13 @@ def jerkin_layers(c):
     crest_img = bpy.data.images.load(str(CREST), check_existing=True)
     crest_img.colorspace_settings.name = "Non-Color"
     crest = g.math("MULTIPLY", g.image(crest_img, crest_uv, "CLIP").outputs["Color"], c.is_part(STEEL))
-    sbase = g.mix_color(rgb(0.24, 0.24, 0.25), rgb(0.36, 0.36, 0.37), tone_s)
+    sbase = g.mix_color(rgb(0.15, 0.15, 0.16), rgb(0.24, 0.24, 0.25), tone_s)
     sbase = g.mix_color(sbase, rgb(0.18, 0.18, 0.19), g.math("MULTIPLY", hammer, 0.3))
-    sbase = g.mix_color(sbase, rgb(0.62, 0.62, 0.63), c.edge)
+    sbase = g.mix_color(sbase, rgb(0.50, 0.50, 0.51), c.edge)
     sbase = g.mix_color(sbase, rgb(0.55, 0.55, 0.56), g.math("MULTIPLY", scratch, 0.5))
-    sbase = g.mix_color(sbase, rgb(0.66, 0.66, 0.67), g.math("MULTIPLY", crest, 0.85))
+    sbase = g.mix_color(sbase, rgb(0.55, 0.55, 0.56), g.math("MULTIPLY", crest, 0.85))
     sbase = g.mix_color(sbase, rgb(0.05, 0.045, 0.04), g.math("MULTIPLY", c.cavity, 0.85))
-    srough = g.math("ADD", 0.36, g.math("MULTIPLY", tone_s, 0.12))
+    srough = g.math("ADD", 0.42, g.math("MULTIPLY", tone_s, 0.12))
     srough = g.mix_float(srough, 0.22, c.edge)
     srough = g.mix_float(srough, 0.42, g.math("MULTIPLY", scratch, 0.6))
     srough = g.mix_float(srough, 0.20, crest)
@@ -756,12 +756,13 @@ def jerkin_layers(c):
         vor = g.node("ShaderNodeTexVoronoi", {"Vector": m.outputs["Vector"], "Scale": 1.0, "Randomness": 0.0},
                      voronoi_dimensions="2D")
         d = vor.outputs["Distance"]
-        return g.remap(g.math("ABSOLUTE", g.math("SUBTRACT", d, 0.40)), 0.0, 0.12, 1.0, 0.0)
+        ring = g.remap(g.math("ABSOLUTE", g.math("SUBTRACT", d, 0.44)), 0.0, 0.16, 1.0, 0.0)
+        return g.math("POWER", ring, 0.6)            # rounded wire profile
 
     rings = g.math("MAXIMUM", ring_grid(0.0), ring_grid(0.5))
     rust = g.math("MULTIPLY", g.remap(g.noise(c.P, 40.0, 3.0), 0.55, 0.7), g.math("SUBTRACT", 1.0, rings))
-    mbase = g.mix_color(rgb(0.015, 0.014, 0.013), rgb(0.42, 0.42, 0.43), rings)
-    mbase = g.mix_color(mbase, rgb(0.13, 0.06, 0.025), g.math("MULTIPLY", rust, 0.8))
+    mbase = g.mix_color(rgb(0.006, 0.006, 0.006), rgb(0.36, 0.36, 0.37), rings)
+    mbase = g.mix_color(mbase, rgb(0.07, 0.035, 0.015), g.math("MULTIPLY", rust, 0.5))
     mbase = g.mix_color(mbase, rgb(0.02, 0.02, 0.02), g.math("MULTIPLY", c.cavity, 0.6))
     mrough = g.mix_float(0.75, 0.32, rings)
     mmetal = g.math("MULTIPLY", rings, 1.0)
@@ -817,9 +818,9 @@ def render_previews(body_fbx):
     kit.setup_studio()
     scene = bpy.context.scene
     scene.render.resolution_x, scene.render.resolution_y = 1400, 1600
-    scene.view_settings.exposure = -0.4
-    for light, loc, energy in (("Key", (-1.6, -2.4, 2.6), 900), ("Rim", (1.8, 2.2, 2.0), 700),
-                               ("Top", (0.0, 0.0, 3.4), 350)):
+    scene.view_settings.exposure = -0.9
+    for light, loc, energy in (("Key", (-1.6, -2.4, 2.6), 380), ("Rim", (1.8, 2.2, 2.0), 300),
+                               ("Top", (0.0, 0.0, 3.4), 150)):
         obj = bpy.data.objects[light]
         obj.location = loc
         obj.data.energy = energy
@@ -830,6 +831,7 @@ def render_previews(body_fbx):
     kit.render_view(renders / "LeatherJerkin_Front.png", Vector((1.25, -2.55, 1.45)), (0.0, 0.0, 1.13), 50)
     kit.render_view(renders / "LeatherJerkin_Back.png", Vector((-1.35, 2.45, 1.5)), (0.0, 0.0, 1.13), 50)
     kit.render_view(renders / "LeatherJerkin_Detail.png", Vector((0.75, -0.95, 1.62)), (0.10, -0.02, 1.42), 70)
+    kit.render_view(renders / "LeatherJerkin_Pauldron.png", Vector((0.95, -0.35, 1.85)), (0.22, 0.0, 1.50), 85)
 
 
 def main():
