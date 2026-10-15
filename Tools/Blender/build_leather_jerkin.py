@@ -770,6 +770,8 @@ def buckle(center, normal, along, width, height, bar=0.0028):
 
 
 # --- pauldrons -----------------------------------------------------------------------
+CREST_ALPHA = math.radians(31)   # crest centre, measured down from the top of the cap
+CREST_V = 0.090                  # pattern-space v of the crest centre (see jerkin_layers)
 def build_pauldrons(body):
     pieces = []
     for side in (1, -1):
@@ -811,7 +813,9 @@ def build_pauldrons(body):
             p = Piece(f"Pauldron{name}_{side}", bm, STEEL, thickness=0.002, rigid=True)
             for i, row in enumerate(vr):
                 for j, v in enumerate(row):
-                    p.pc[v] = (phis[j] * (R + extra), alphas[i] * (R + extra))
+                    # v is anchored so the crest (centred at v = CREST_V) sits at CREST_ALPHA,
+                    # the outward face of the cap, whatever the plate's radius
+                    p.pc[v] = (phis[j] * (R + extra), (alphas[i] - CREST_ALPHA) * (R + extra) + CREST_V)
             pieces.append(p)
             # rivets at both ends of each overlap
             if name != "Cap":
@@ -1042,8 +1046,8 @@ def jerkin_layers(c):
     rust = g.math("MULTIPLY", g.remap(g.noise(c.P, 18.0, 5.0, 0.65), 0.6, 0.74),
                   g.math("ADD", g.math("MULTIPLY", c.cavity, 0.8), 0.25))
     # fleur-de-lis on the pauldron caps, placed in the plate's own (phi, alpha) coordinates:
-    # pc = (phi * r, alpha * r); the cap (r ~ 0.145 m) faces outwards around alpha 38 deg,
-    # so the crest is centred there with its tip towards the neck.
+    # pc = (phi * r, v) with v = CREST_V at CREST_ALPHA on the cap's outward face; the
+    # crest is centred there with its tip towards the neck.
     crest_uv = g.node("ShaderNodeCombineXYZ", {
         "X": g.math("ADD", g.math("DIVIDE", pc["X"], 0.105), 0.5),
         "Y": g.math("DIVIDE", g.math("SUBTRACT", 0.1425, pc["Y"]), 0.105)}).outputs["Vector"]
