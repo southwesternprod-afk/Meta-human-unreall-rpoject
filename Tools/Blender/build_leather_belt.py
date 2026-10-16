@@ -373,7 +373,7 @@ def belt_layers(c):
     has_rim = g.math("LESS_THAN", ed, 0.049)          # plates (strap end) have rims; wire does not
     rim = g.mul(g.mul(g.remap(ed, 0.0, 0.0016, 1.0, 0.0), g.remap(facing, 0.3, 0.8)),     # front edge, not the sides
                 g.add(0.7, g.mul(aaa.weathering.breakup(c, 40.0, 0.35, 0.6), 0.3)))
-    edge = g.mix_float(g.maxf(crown, g.mul(c.edge, 0.25)), g.maxf(rim, g.mul(crown, 0.5)), has_rim)
+    edge = g.mix_float(g.maxf(g.mul(crown, 0.85), g.mul(c.edge, 0.25)), rim, has_rim)   # plates: rims only
     iron = L.steel_blackened(c.with_masks(edge=edge), wear=0.5, dirt=0.45, rust=0.3, rub=0.0)
     # strap end: an engraved border and a cross line, black with packed grime
     is_end = c.is_value(tone, STRAP_END)
