@@ -1057,19 +1057,29 @@ def build_belt_loops(bvhs, center):
         a = FRONT + math.radians(deg)
         d = Vector((math.cos(a), math.sin(a), 0))
         th = math.radians(deg) % (2 * math.pi)
-        belt_out = max(float(np.interp(th, np.append(angles, 2 * math.pi), np.append(radius[:, c], radius[0, c])))
-                       for c in range(len(BELT_KS)))
+        cols = [float(np.interp(th, np.append(angles, 2 * math.pi), np.append(radius[:, c], radius[0, c])))
+                for c in range(len(BELT_KS))]
         zs = np.linspace(BELT_Z - BELT_W / 2 - 0.019, BELT_Z + BELT_W / 2 + 0.019, 39)   # + flat sewn ends
         out = []
         for z in zs:
             r = outermost(bvhs, Vector((center[0], center[1], z)), d)
-            over = belt_out + 0.0016 + 0.0025                # clear of the belt, loop thickness
+            k = max(-1.0, min(1.0, (z - BELT_Z) / (BELT_W / 2)))
+            over = float(np.interp(k, BELT_KS, cols)) + 0.0026 + 0.0025   # lies on the belt; thickness
             if lo <= z <= hi:
                 out.append(over)
             else:                                             # tuck back down to the surface
-                f = min(1.0, (lo - z) / 0.008 if z < lo else (z - hi) / 0.008)
+                f = min(1.0, (lo - z) / 0.012 if z < lo else (z - hi) / 0.012)
                 out.append(over + (r + 0.0006 - over) * smooth01(f))
-        samples = [(Vector((center[0], center[1], z)) + d * r, d) for z, r in zip(zs, out)]
+        # face the loop along the belt's own surface (the body is oval: not square to `d`)
+        def belt_pt(dd):
+            aa = FRONT + math.radians(dd)
+            rr = float(np.interp(math.radians(dd) % (2 * math.pi), np.append(angles, 2 * math.pi),
+                                 np.append(radius[:, 2], radius[0, 2])))
+            return Vector((math.cos(aa), math.sin(aa), 0)) * rr
+        along = belt_pt(deg + 1.0) - belt_pt(deg - 1.0)
+        n = Vector((0, 0, 1)).cross(along).normalized()
+        n = n if n.dot(d) > 0 else -n
+        samples = [(Vector((center[0], center[1], z)) + d * r, n) for z, r in zip(zs, out)]
         loop, _ = surface_ribbon(samples, 0.013, 0.0, f"BeltLoop_{deg}", STRAP, thickness=0.0025)
         pieces.append(loop)
     return pieces
@@ -1294,10 +1304,14 @@ def jerkin_layers(c):
         height = g.sub(height, g.add(g.mul(seam, 1.5), g.mul(near(ed, 0.0012, 0.0012), 0.8)))
         return aaa.engine.Surface(base, rough, s.metal, height, s.bump)
 
-    main = tailor(L.leather(c, color=LEATHER_MAIN, wear=0.55, dirt=0.55, grain_amount=0.4), LEATHER_MAIN, True)
-    strap = tailor(L.leather(c, color=LEATHER_STRAP, wear=0.6, dirt=0.5, grain_amount=0.35, scale=1.15),
+    # Leather wears at its cut edges and seams; the baked convexity mask would also flag
+    # every fold crest and paint pale blotches along them, so it only contributes a little.
+    cl = c.with_masks(edge=g.maxf(g.remap(ed, 0.0, 0.006, 1.0, 0.0),
+                                  g.maxf(g.mul(piping, 0.6), g.mul(c.edge, 0.3))))
+    main = tailor(L.leather(cl, color=LEATHER_MAIN, wear=0.55, dirt=0.55, grain_amount=0.4), LEATHER_MAIN, True)
+    strap = tailor(L.leather(cl, color=LEATHER_STRAP, wear=0.6, dirt=0.5, grain_amount=0.35, scale=1.15),
                    LEATHER_STRAP, False)
-    bracer = tailor(L.leather(c, color=LEATHER_BRACER, wear=0.65, dirt=0.5, grain_amount=0.4), LEATHER_BRACER, False)
+    bracer = tailor(L.leather(cl, color=LEATHER_BRACER, wear=0.65, dirt=0.5, grain_amount=0.4), LEATHER_BRACER, False)
 
     # ---- blackened steel: pauldrons, buckles, rivets ----------------------------------------
     # Plates are only 2 mm thick, so the AO-based edge mask would flag them everywhere;

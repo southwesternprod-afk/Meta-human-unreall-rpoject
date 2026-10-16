@@ -252,7 +252,8 @@ def belt_layers(c):
     hide_v = g.node("ShaderNodeTexWhiteNoise", {"W": c.attr("hide")}, noise_dimensions="1D").outputs["Value"]
     hide_k = g.add(0.90, g.mul(hide_v, 0.2))
 
-    s = L.leather(c, color=LEATHER_BELT, wear=0.6, dirt=0.5, grain_amount=0.45)
+    cl = c.with_masks(edge=g.maxf(g.remap(ed, 0.0, 0.005, 1.0, 0.0), g.mul(c.edge, 0.3)))
+    s = L.leather(cl, color=LEATHER_BELT, wear=0.6, dirt=0.5, grain_amount=0.22, scale=1.6)
     col = srgb(LEATHER_BELT)
     dark = tuple(v * 0.4 for v in col[:3]) + (1.0,)
     base = g.tint(s.base, g.node("ShaderNodeCombineColor", {"Red": hide_k, "Green": hide_k, "Blue": hide_k}).outputs[0])
@@ -264,8 +265,10 @@ def belt_layers(c):
     leather = aaa.engine.Surface(base, rough, 0.0, height, s.bump)
 
     # fittings: worn wire edges from the AO edge, plate rims from the distance to the rim
-    edge = g.maxf(g.mul(c.edge, 0.7), g.remap(ed, 0.0, 0.004, 1.0, 0.0))
-    iron = L.steel_blackened(c.with_masks(edge=edge), wear=0.7, dirt=0.45, rust=0.35)
+    has_rim = g.math("LESS_THAN", ed, 0.049)          # plates (strap end) have rims; wire does not
+    edge = g.mix_float(g.mul(c.edge, 0.6), g.mul(g.remap(ed, 0.0, 0.003, 1.0, 0.0),
+                                                aaa.weathering.breakup(c, 40.0, 0.35, 0.6)), has_rim)
+    iron = L.steel_blackened(c.with_masks(edge=edge), wear=0.55, dirt=0.45, rust=0.3)
     return [(None, leather), (c.is_value(part, STEEL), iron)]
 
 
