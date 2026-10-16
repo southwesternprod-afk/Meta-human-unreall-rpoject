@@ -39,7 +39,7 @@ TONGUE = 3.0              # tone id: the punched tongue
 STRAP_END = 4.0           # tone id: the iron strap end (engraved)
 BUCKLE_DEG = -12.0        # around from the centre front (+ = character's left)
 KEEPER_DEG = -1.0
-TAIL_DEG = 9.0            # where the end loops over the belt and hangs down
+TAIL_DEG = 11.5           # where the end loops over the belt and hangs down (a little tongue shows)
 TAIL_LEN = 0.11           # how far it hangs below the belt, strap end included
 TONGUE_LIFT, TONGUE_T = 0.0029, 0.0026
 TAIL_T = 0.0028
@@ -164,9 +164,19 @@ def build_tail(frame, bvhs_under, c):
     l0 = (stack - BELT_T) / 2                       # middle of the belt + tongue stack
     centre = frame.point(TAIL_DEG, 1.0) + nrm * l0
     samples = []
-    for phi in np.linspace(math.radians(112), 0.0, 10, endpoint=False):   # over the top edge
+    for phi in np.linspace(math.radians(112), 0.0, 15, endpoint=False):   # over the top edge
         nn = nrm * math.cos(phi) + up * math.sin(phi)
-        samples.append((centre + nn * (lift - l0), nn))
+        p = centre + nn * (lift - l0)
+        if not samples:                             # start behind the belt only where there is room
+            clear = True
+            for q in (p, p - nn * TAIL_T):
+                for o in (-0.5, 0.0, 0.5):
+                    qo = q + side * (o * BELT_W * 0.9)
+                    dq = Vector((qo.x - c[0], qo.y - c[1], 0.0))
+                    clear &= dq.length > outermost(bvhs_under, Vector((c[0], c[1], qo.z)), dq.normalized()) + 0.0006
+            if not clear:
+                continue
+        samples.append((p, nn))
     for k in np.linspace(1.0, -1.0, 9):                                     # down the front
         samples.append((frame.point(TAIL_DEG, k) + nrm * lift, nrm))
     # below the belt it hangs plumb from the lower edge, resting on the skirt only
@@ -359,9 +369,10 @@ def belt_layers(c):
                                              "Z": 0.0}).outputs[0]
     radial = g.node("ShaderNodeVectorMath", {0: radial}, operation="NORMALIZE").outputs["Vector"]
     facing = g.node("ShaderNodeVectorMath", {0: c.N, 1: radial}, operation="DOT_PRODUCT").outputs["Value"]
-    crown = g.mul(g.remap(facing, 0.6, 0.95), g.add(0.55, g.mul(aaa.weathering.breakup(c, 30.0, 0.35, 0.65), 0.45)))
+    crown = g.mul(g.remap(facing, 0.8, 0.98), g.add(0.55, g.mul(aaa.weathering.breakup(c, 30.0, 0.35, 0.65), 0.45)))
     has_rim = g.math("LESS_THAN", ed, 0.049)          # plates (strap end) have rims; wire does not
-    rim = g.mul(g.remap(ed, 0.0, 0.0016, 1.0, 0.0), g.add(0.7, g.mul(aaa.weathering.breakup(c, 40.0, 0.35, 0.6), 0.3)))
+    rim = g.mul(g.mul(g.remap(ed, 0.0, 0.0016, 1.0, 0.0), g.remap(facing, 0.3, 0.8)),     # front edge, not the sides
+                g.add(0.7, g.mul(aaa.weathering.breakup(c, 40.0, 0.35, 0.6), 0.3)))
     edge = g.mix_float(g.maxf(crown, g.mul(c.edge, 0.25)), g.maxf(rim, g.mul(crown, 0.5)), has_rim)
     iron = L.steel_blackened(c.with_masks(edge=edge), wear=0.5, dirt=0.45, rust=0.3, rub=0.0)
     # strap end: an engraved border and a cross line, black with packed grime
