@@ -41,10 +41,10 @@ LEATHER, STEEL, CLOTH, MAIL = 0.0, 1.0, 2.0, 3.0
 # Leather tones
 MAIN, STRAP, BRACER = 0.0, 1.0, 2.0
 
-WAIST_Z = 0.955          # jerkin body / skirt seam
+WAIST_Z = 1.000          # jerkin body / skirt seam (top of the hips; the belt sits here)
 V_BOTTOM_Z = 1.505       # bottom of the V-neck
 V_HALF_WIDTH = 0.075     # half-width of the V-neck where it meets the collar
-HEM_Z = 0.79             # bottom of the skirt (upper thigh, worn over trousers)
+HEM_Z = 0.81             # bottom of the skirt (upper thigh, worn over trousers)
 CROSS_Z = 1.405          # where the two shoulder straps cross, front and back
 CROSS_SLOPE = 0.82       # rise of each shoulder strap per metre across the chest
 ARMS = r"(upperarm|lowerarm|hand|thumb_|index_|middle_|ring_|pinky_)"
@@ -466,7 +466,7 @@ def build_front_details(torso_bm):
     pieces.append(placket)
     # five buckled closure straps across the front
     # (the shoulder straps cross between the first and second one)
-    for z in (1.487, 1.31, 1.22, 1.13, 1.04):
+    for z in (1.487, 1.31, 1.225, 1.14, 1.06):
         samples = front_line(bvh, (-0.058, z), (0.064, z), 28)
         strap, centers = surface_ribbon(samples, 0.021, 0.0045, f"Closure_{z}", STRAP, tips=(0.008, 0.0105))
         pieces.append(strap)
@@ -589,8 +589,8 @@ def build_waist_band(torso_bm, skirt_bm):
     bvhs = [BVHTree.FromBMesh(torso_bm), BVHTree.FromBMesh(skirt_bm)]
     c = np.mean([v.co[:2] for v in torso_bm.verts if abs(v.co.z - WAIST_Z) < 0.02], axis=0)
     seg = 128
-    profile = ((-0.013, 0.0006), (-0.0105, 0.0024), (-0.005, 0.0034), (0.009, 0.0034),
-               (0.0145, 0.0024), (0.017, 0.0006))                    # rounded cross-section
+    profile = ((-0.013, 0.0004), (-0.0105, 0.0010), (-0.005, 0.0014), (0.009, 0.0014),
+               (0.0145, 0.0010), (0.017, 0.0004))     # low rounded welt: the belt goes over it
     rows = []
     for dz, lift in profile:
         z = WAIST_Z + dz
@@ -1001,10 +1001,11 @@ def build_arming_straps(body, garment):
 
 # The separate belt (build_leather_belt.py) is shaped here so the jerkin's loops and
 # the belt always agree on where it sits.
-BELT_W = 0.044            # belt width (m)
-BELT_T = 0.0045           # belt leather thickness
+BELT_W = 0.036            # belt width (m)
+BELT_T = 0.0032           # belt leather thickness
 BELT_Z = WAIST_Z + 0.002  # centred on the waist welt
-BELT_GAP = 0.002          # air between the welt/jerkin and the belt (covers game-mesh deviation)
+BELT_GAP = 0.0009         # air between the welt/jerkin and the belt
+BELT_KS = (-1.0, -0.55, 0.0, 0.55, 1.0)   # columns across the belt (lower edge .. upper edge)
 
 
 def outermost(bvhs, o, d, reach=0.6):
@@ -1018,51 +1019,58 @@ def outermost(bvhs, o, d, reach=0.6):
 
 
 def belt_profile(bvhs, center, n=192):
-    """The belt's outer face round the waist: (angles from the front, radius, tilt).
-    Radius at angle j and height k (-1 lower edge .. 1 upper edge) = base[j] + tilt[j] * k.
-    A stiff belt: flat across its width, taut around the body (bridging hollows such as
-    the small of the back), resting on the outermost of welt / jerkin / skirt."""
+    """The belt's outer face round the waist: (angles from the front, radius[j, c]) for
+    angle j and column BELT_KS[c]. A cinched leather belt: it presses onto what is under
+    it (outermost of welt / jerkin / skirt), stays nearly flat across its width but lets
+    its edges ease down by up to 3.5 mm onto what is beneath, and only bridges small
+    hollows."""
     angles = np.array([2 * math.pi * j / n for j in range(n)])
-    ka = np.linspace(-1.08, 1.08, 11)                     # rows underneath, incl. rounded edges
+    ka = np.linspace(-1.08, 1.08, 13)                     # rows underneath, incl. rounded edges
     rk = np.zeros((n, len(ka)))
     for j, th in enumerate(angles):
         a = FRONT + th
         d = Vector((math.cos(a), math.sin(a), 0.0))
         for i, k in enumerate(ka):
             rk[j, i] = outermost(bvhs, Vector((center[0], center[1], BELT_Z + k * BELT_W / 2)), d)
-    tilt = circular_smooth((rk[:, -1] - rk[:, 0]) / 2, k=6, passes=4)
-    base = (rk - tilt[:, None] * ka[None, :]).max(1)
-    for _ in range(120):                                  # taut: bridges the hollows
-        base = np.maximum(base, circular_smooth(base, k=3, passes=1))
-    base = np.maximum(circular_smooth(base, k=2, passes=1), base) + BELT_GAP + BELT_T
-    return angles, base, tilt
+    # cinched, the belt sits as a shallow cone following the body's taper (hip -> waist):
+    # its tilt is the least-squares slope of what is underneath, lightly smoothed
+    kc = ka - ka.mean()
+    tilt = ((rk - rk.mean(1, keepdims=True)) * kc[None, :]).sum(1) / (kc ** 2).sum()
+    tilt = circular_smooth(tilt, k=3, passes=2)
+    flat = (rk - tilt[:, None] * ka[None, :]).max(1)
+    flat = np.maximum(flat, circular_smooth(flat, k=2, passes=2))       # small hollows only
+    radius = np.zeros((n, len(BELT_KS)))
+    for col, k in enumerate(BELT_KS):
+        req = rk[:, np.abs(ka - k) <= 0.2].max(1)                        # what is under this column
+        req = np.maximum(req, circular_smooth(req, k=2, passes=2))
+        radius[:, col] = np.maximum(req, flat + tilt * k - 0.0035) + BELT_GAP + BELT_T
+    return angles, radius
 
 
 def build_belt_loops(bvhs, center):
     """Four leather belt loops over the waist welt. They ride over the separate belt
     (see belt_profile) and still read as loops when the belt is taken off."""
     pieces = []
-    angles, base, tilt = belt_profile(bvhs, center)
+    angles, radius = belt_profile(bvhs, center)
     lo, hi = BELT_Z - BELT_W / 2 - 0.0035, BELT_Z + BELT_W / 2 + 0.0035   # belt + rounded edges
     for deg in (62, 128, -128, -62):                          # around from the centre front
         a = FRONT + math.radians(deg)
         d = Vector((math.cos(a), math.sin(a), 0))
         th = math.radians(deg) % (2 * math.pi)
-        b = float(np.interp(th, np.append(angles, 2 * math.pi), np.append(base, base[0])))
-        t = float(np.interp(th, np.append(angles, 2 * math.pi), np.append(tilt, tilt[0])))
-        zs = np.linspace(WAIST_Z - 0.034, WAIST_Z + 0.038, 37)
+        belt_out = max(float(np.interp(th, np.append(angles, 2 * math.pi), np.append(radius[:, c], radius[0, c])))
+                       for c in range(len(BELT_KS)))
+        zs = np.linspace(BELT_Z - BELT_W / 2 - 0.019, BELT_Z + BELT_W / 2 + 0.019, 39)   # + flat sewn ends
         out = []
         for z in zs:
             r = outermost(bvhs, Vector((center[0], center[1], z)), d)
-            k = max(-1.0, min(1.0, (z - BELT_Z) / (BELT_W / 2)))
-            over = b + t * k + 0.0028 + 0.0025               # clear of the belt (+ face angle), thickness
+            over = belt_out + 0.0016 + 0.0025                # clear of the belt, loop thickness
             if lo <= z <= hi:
                 out.append(over)
             else:                                             # tuck back down to the surface
-                f = min(1.0, (lo - z) / 0.010 if z < lo else (z - hi) / 0.010)
+                f = min(1.0, (lo - z) / 0.008 if z < lo else (z - hi) / 0.008)
                 out.append(over + (r + 0.0006 - over) * smooth01(f))
         samples = [(Vector((center[0], center[1], z)) + d * r, d) for z, r in zip(zs, out)]
-        loop, _ = surface_ribbon(samples, 0.016, 0.0, f"BeltLoop_{deg}", STRAP, thickness=0.0025)
+        loop, _ = surface_ribbon(samples, 0.013, 0.0, f"BeltLoop_{deg}", STRAP, thickness=0.0025)
         pieces.append(loop)
     return pieces
 
@@ -1104,7 +1112,7 @@ def build_all(body, high=True):
     collar = build_collar(body, torso_ref)
     pieces = [torso, skirt, mail_fauld, collar, build_mail_gorget(body), band]
     c = np.mean([v.co[:2] for v in torso_ref.verts if abs(v.co.z - WAIST_Z) < 0.02], axis=0)
-    pieces += build_belt_loops([BVHTree.FromBMesh(b) for b in (torso_ref, skirt.bm, band.bm)], c)
+    pieces += build_belt_loops([BVHTree.FromBMesh(b) for b in (torso_bm, skirt.bm, band.bm)], c)
     pieces += build_front_details(torso_ref)
     straps = build_shoulder_straps(body, torso_ref)
     body.bm.faces.ensure_lookup_table()

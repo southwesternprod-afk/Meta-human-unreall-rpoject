@@ -5,7 +5,9 @@ mesh on the MetaHuman body skeleton), so it can be equipped and removed in game.
 `Tools/Blender/build_leather_belt.py` to sit over the jerkin's waist welt and pass under
 its four belt loops (both use the same belt shape, so they always fit together).
 
-- 44 mm leather belt, stitched and burnished edges
+- 36 mm belt of 3.2 mm leather, stitched and burnished edges, worn at the top of the hips;
+  cinched onto the jerkin (follows its taper as a shallow cone, edges conform), checked
+  for clipping and for gaps (gap under the belt: ~2 mm typical, ~3 mm at the edges)
 - forged buckle with a riveted leather chape; punched tongue through a keeper; the end
   tucked under the belt and hanging down the front with an iron strap end
 - five leather frogs with iron D-rings: the **attachment slots** for the separate pouches
@@ -13,7 +15,7 @@ its four belt loops (both use the same belt shape, so they always fit together).
 
 | | |
 |---|---|
-| Mesh | ~10.6k tris, skinned to the MetaHuman body skeleton (buckle, rings and strap end rigid) |
+| Mesh | ~9k tris, skinned to the MetaHuman body skeleton (buckle, rings and strap end rigid) |
 | Material | `M_LeatherBelt` (single texture set) |
 | Textures (2048²) | `T_LeatherBelt_BaseColor`, `T_LeatherBelt_Normal` (DirectX), `T_LeatherBelt_ORM` |
 

@@ -5,7 +5,7 @@
 A separate skeletal mesh on the MetaHuman skeleton (equip / remove it in game like
 the jerkin). It is fitted over the jerkin's waist welt and passes under its belt
 loops. Pieces (one mesh, one texture set):
-  - 44 mm belt with stitched, burnished edges
+  - 36 mm belt (3.2 mm leather) with stitched, burnished edges, cinched onto the jerkin
   - forged buckle with a leather chape, the tongue through a keeper, its end
     tucked under the belt and hanging down the front with an iron strap end
   - five leather frogs with iron D-rings: the attachment slots for the separate
@@ -26,7 +26,7 @@ from mathutils.bvhtree import BVHTree
 
 import build_leather_jerkin as bj
 import clothing_kit as ck
-from build_leather_jerkin import (LEATHER, STEEL, STRAP, WAIST_Z, FRONT, BELT_W, BELT_T, BELT_Z,
+from build_leather_jerkin import (LEATHER, STEEL, STRAP, WAIST_Z, FRONT, BELT_W, BELT_T, BELT_Z, BELT_KS,
                                   Piece, aaa, L, outermost)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,7 +38,7 @@ TONGUE = 3.0              # tone id: the punched tongue
 BUCKLE_DEG = -12.0        # around from the centre front (+ = character's left)
 KEEPER_DEG = -1.0
 TAIL_DEG = 9.0            # where the tucked end hangs down
-TAIL_LEN = 0.17
+TAIL_LEN = 0.11
 # attachment slots for the separate pouches / sheaths (degrees from the centre front)
 SLOTS = {"PouchR": -45.0, "PouchL": 45.0, "SheathR": -95.0, "SheathL": 95.0, "Back": 180.0}
 LEATHER_BELT = "#3a2a1f"
@@ -69,8 +69,8 @@ def sweep_tube(points, radius, closed, up, sides=8):
 class BeltFrame:
     """The belt band's outer surface as a function of (angle, across)."""
 
-    def __init__(self, c, angles, base, tilt):
-        self.c, self.angles, self.base, self.tilt = c, angles, base, tilt
+    def __init__(self, c, angles, radius):
+        self.c, self.angles, self.r = c, angles, radius
 
     def dirn(self, deg):
         a = FRONT + math.radians(deg)
@@ -79,9 +79,8 @@ class BeltFrame:
     def radius(self, deg, k=0.0):
         th = math.radians(deg) % (2 * math.pi)
         x = np.append(self.angles, 2 * math.pi)
-        b = float(np.interp(th, x, np.append(self.base, self.base[0])))
-        t = float(np.interp(th, x, np.append(self.tilt, self.tilt[0])))
-        return b + t * k
+        cols = [float(np.interp(th, x, np.append(self.r[:, c], self.r[0, c]))) for c in range(len(BELT_KS))]
+        return float(np.interp(k, BELT_KS, cols))
 
     def point(self, deg, k=0.0, lift=0.0):
         """Point on the belt's outer face; `k` -1..1 from the lower to the upper edge."""
@@ -100,19 +99,19 @@ class BeltFrame:
 
 # --- the belt -----------------------------------------------------------------------------
 def build_band(bvhs, c):
-    """Stiff belt band: flat across its width, taut around the body, resting on the
-    outermost of the jerkin's welt / torso / skirt."""
-    angles, base, tilt = bj.belt_profile(bvhs, c)            # shared with the jerkin's loops
-    ks = (-1.0, -0.55, 0.0, 0.55, 1.0)                       # columns across the belt
-    frame = BeltFrame(c, angles, base, tilt)
+    """The belt band, cinched onto the jerkin (see bj.belt_profile, shared with the
+    jerkin's belt loops so the two always fit)."""
+    angles, radius = bj.belt_profile(bvhs, c)
+    ks = BELT_KS
+    frame = BeltFrame(c, angles, radius)
 
     rows = []
     for k in ks:
-        rows.append([frame.point(math.degrees(th), k, 0.0006 * (1 - k * k)) for th in angles])
+        rows.append([frame.point(math.degrees(th), k, 0.0004 * (1 - k * k)) for th in angles])
     bm, vr = bj.loft_grid(rows)
     bj.orient_outward(bm)
     piece = Piece("Belt", bm, LEATHER, STRAP, thickness=BELT_T)
-    r = float(np.mean(base))
+    r = float(np.mean(radius))
     for i, row in enumerate(vr):
         for j, v in enumerate(row):
             piece.pc[v] = (angles[j] * r, ks[i] * BELT_W / 2)
@@ -129,37 +128,37 @@ def build_buckle_set(frame, bvhs_under, c):
     """Buckle, chape, punched tongue, keeper and the tucked hanging end."""
     pieces = []
     nb, tb = frame.normal(BUCKLE_DEG), frame.tangent(BUCKLE_DEG)
-    pieces.append(bj.buckle(frame.point(BUCKLE_DEG, 0.0, 0.0004), nb, tb, 0.062, 0.048, bar=0.0056))
+    pieces.append(bj.buckle(frame.point(BUCKLE_DEG, 0.0, 0.0003), nb, tb, BELT_W + 0.009, 0.034, bar=0.0042))
     # chape: the leather folded round the buckle bar, riveted
-    chape, _ = band_ribbon(frame, BUCKLE_DEG - 2.0, BUCKLE_DEG - 15.0, 0.0034, BELT_W * 0.94, "Chape", STRAP,
-                           0.003, steps=16, tips=(0.0, 0.0))
+    chape, _ = band_ribbon(frame, BUCKLE_DEG - 2.0, BUCKLE_DEG - 13.0, 0.0027, BELT_W * 0.94, "Chape", STRAP,
+                           0.0024, steps=16, tips=(0.0, 0.0))
     pieces.append(chape)
     for k in (-0.5, 0.5):
-        q = frame.point(BUCKLE_DEG - 11.0, k, 0.0034)
-        pieces.append(bj.rivet(q, frame.normal(BUCKLE_DEG - 11.0), r=0.0036))
+        q = frame.point(BUCKLE_DEG - 9.5, k, 0.0027)
+        pieces.append(bj.rivet(q, frame.normal(BUCKLE_DEG - 9.5), r=0.0029))
     # tongue: through the buckle, under the keeper, over the belt
-    tongue, _ = band_ribbon(frame, BUCKLE_DEG, TAIL_DEG + 1.5, 0.0038, BELT_W * 0.9, "Tongue", TONGUE, 0.0035,
-                            steps=24, tips=(0.0, 0.010))
+    tongue, _ = band_ribbon(frame, BUCKLE_DEG, TAIL_DEG + 1.5, 0.0029, BELT_W * 0.9, "Tongue", TONGUE, 0.0026,
+                            steps=24, tips=(0.0, 0.008))
     pieces.append(tongue)
     pieces.append(bj.keeper(frame.point(KEEPER_DEG, 0.0, 0.0002), frame.normal(KEEPER_DEG),
-                            frame.tangent(KEEPER_DEG), BELT_W, 0.0080, "BeltKeeper"))
+                            frame.tangent(KEEPER_DEG), BELT_W, 0.0050, "BeltKeeper"))
     # the end, tucked under the belt and hanging down the front over the skirt
     d = frame.dirn(TAIL_DEG)
     samples = []
     for z in np.arange(BELT_Z - BELT_W / 2 + 0.012, BELT_Z - BELT_W / 2 - TAIL_LEN, -0.008):
         o = Vector((c[0], c[1], z))
         r = outermost(bvhs_under, o, d)
-        samples.append((o + d * (r + 0.0016 + 0.0035), d))     # outer face; 3.5 mm leather under it
-    tail, tail_c = bj.surface_ribbon(samples, BELT_W * 0.9, 0.0, "BeltTail", STRAP, thickness=0.0035,
+        samples.append((o + d * (r + 0.0014 + 0.0028), d))     # outer face; 2.8 mm leather under it
+    tail, tail_c = bj.surface_ribbon(samples, BELT_W * 0.9, 0.0, "BeltTail", STRAP, thickness=0.0028,
                                      tips=(0.0, 0.0))
     pieces.append(tail)
     # iron strap end on the tip, riveted
     tip = samples[-5:]
-    end, _ = bj.surface_ribbon([(loc + n * 0.0008, n) for loc, n in tip], BELT_W * 0.9 + 0.003, 0.0, "StrapEnd",
-                               STRAP, thickness=0.0014, tips=(0.0, 0.014))
+    end, _ = bj.surface_ribbon([(loc + n * 0.0007, n) for loc, n in tip], BELT_W * 0.9 + 0.0025, 0.0, "StrapEnd",
+                               STRAP, thickness=0.0012, tips=(0.0, 0.011))
     end.part, end.rigid = STEEL, True
     pieces.append(end)
-    pieces.append(bj.rivet(tip[1][0] + tip[1][1] * 0.0009, tip[1][1], r=0.0032))
+    pieces.append(bj.rivet(tip[1][0] + tip[1][1] * 0.0008, tip[1][1], r=0.0026))
     return pieces
 
 
@@ -175,7 +174,7 @@ def build_slots(frame, bvhs_under, c):
         def under(z):
             # the widest of the frog's centre and edges (it may sit on a sunken skirt seam)
             r = 0.0
-            for off in (-0.011, 0.0, 0.011):
+            for off in (-0.0085, 0.0, 0.0085):
                 o = Vector((c[0], c[1], z)) + side * off
                 r = max(r, outermost(bvhs_under, o, d))
             if abs(z - BELT_Z) <= BELT_W / 2 + 0.002:
@@ -185,14 +184,14 @@ def build_slots(frame, bvhs_under, c):
         rs = np.array([under(z) for z in zs])
         for _ in range(20):                                 # drape over the belt's top edge
             rs[1:-1] = np.maximum(rs[1:-1], (rs[:-2] + rs[2:]) / 2)
-        samples = [(Vector((c[0], c[1], z)) + d * (r + 0.0025 + 0.003), d) for z, r in zip(zs, rs)]
-        frog, _ = bj.surface_ribbon(samples, 0.022, 0.0, f"Frog_{name}", STRAP, thickness=0.003)
+        samples = [(Vector((c[0], c[1], z)) + d * (r + 0.0018 + 0.0024), d) for z, r in zip(zs, rs)]
+        frog, _ = bj.surface_ribbon(samples, 0.017, 0.0, f"Frog_{name}", STRAP, thickness=0.0024)
         pieces.append(frog)
-        pieces.append(bj.rivet(samples[8][0] + d * 0.0003, d, r=0.0032))
+        pieces.append(bj.rivet(samples[8][0] + d * 0.0003, d, r=0.0026))
         # D-ring hanging from the frog's lower end, lying against the skirt
         top = samples[-1][0] + Vector((0, 0, 0.004))
         tangent = Vector((0, 0, 1)).cross(d).normalized()
-        w, h, wire = 0.032, 0.028, 0.0028
+        w, h, wire = 0.026, 0.022, 0.0023
         pts = [top + tangent * (w / 2 - w * i / 6) for i in range(7)]                 # straight bar
         pts += [top + tangent * (-w / 2 * math.cos(p)) - Vector((0, 0, h * math.sin(p)))
                 for p in np.linspace(0, math.pi, 14)[1:-1]]                              # round belly
@@ -216,11 +215,13 @@ def build_slots(frame, bvhs_under, c):
 
 
 def build_all(body):
-    torso = bj.build_torso(body, high=True)
+    torso = bj.build_torso(body, high=True)           # the jerkin is placed on this...
     skirt, _ = bj.build_skirt(body, torso)
     welt = bj.build_waist_band(torso, skirt.bm)
+    game_torso = bj.build_torso(body, high=False)     # ...but the belt sits on the game mesh
     c = np.mean([v.co[:2] for v in torso.verts if abs(v.co.z - WAIST_Z) < 0.02], axis=0)
-    under = [BVHTree.FromBMesh(b) for b in (torso, skirt.bm, welt.bm)]
+    placket = bj.build_front_details(torso)[0]        # the centre placket runs down under the belt
+    under = [BVHTree.FromBMesh(b) for b in (game_torso, skirt.bm, welt.bm, placket.bm)]
     band, frame = build_band(under, c)
     pieces = [band] + build_buckle_set(frame, under, c)
     slot_pieces, slots = build_slots(frame, under, c)
@@ -239,8 +240,8 @@ def belt_layers(c):
         return g.remap(g.math("ABSOLUTE", g.sub(x, target)), 0.0, width, 1.0, 0.0)
 
     stitch_dots = g.remap(g.voronoi(g.mapping(c.P, (1 / 0.0042,) * 3), 1.0), 0.16, 0.30, 1.0, 0.0)
-    stitch = g.mul(near(ed, 0.0040, 0.0008), stitch_dots)
-    burnish = g.remap(ed, 0.0, 0.003, 1.0, 0.0)
+    stitch = g.mul(near(ed, 0.0032, 0.0007), stitch_dots)
+    burnish = g.remap(ed, 0.0, 0.0025, 1.0, 0.0)
     # punched holes every 25 mm along the tongue's centre line
     is_tongue = c.is_value(tone, TONGUE)
     along = g.math("FRACT", g.math("DIVIDE", pc["X"], 0.025))
@@ -308,10 +309,13 @@ def render_previews(body_fbx):
         kit.track(obj, Vector((0, 0, 1.0)))
     renders = OUT_DIR / "Renders"
     renders.mkdir(parents=True, exist_ok=True)
-    kit.render_view(renders / "LeatherBelt_Front.png", Vector((0.55, -1.55, 1.15)), (0.0, 0.0, 0.93), 50)
-    kit.render_view(renders / "LeatherBelt_Buckle.png", Vector((0.12, -0.62, 1.02)), (0.0, -0.12, 0.93), 70)
-    kit.render_view(renders / "LeatherBelt_Side.png", Vector((1.55, -0.55, 1.1)), (0.0, 0.0, 0.93), 50)
-    kit.render_view(renders / "LeatherBelt_Back.png", Vector((-0.6, 1.55, 1.15)), (0.0, 0.0, 0.93), 50)
+    z = BELT_Z
+    kit.render_view(renders / "LeatherBelt_Front.png", Vector((0.55, -1.55, z + 0.2)), (0.0, 0.0, z - 0.03), 50)
+    kit.render_view(renders / "LeatherBelt_Buckle.png", Vector((0.1, -0.6, z + 0.06)), (0.0, -0.12, z - 0.02), 70)
+    kit.render_view(renders / "LeatherBelt_Side.png", Vector((1.55, -0.55, z + 0.15)), (0.0, 0.0, z - 0.03), 50)
+    kit.render_view(renders / "LeatherBelt_Back.png", Vector((-0.6, 1.55, z + 0.2)), (0.0, 0.0, z - 0.03), 50)
+    kit.render_view(renders / "LeatherBelt_Low.png", Vector((0.7, -0.9, z - 0.45)), (0.05, 0.0, z), 55)
+    kit.render_view(renders / "LeatherBelt_High.png", Vector((0.55, -0.75, z + 0.6)), (0.05, 0.0, z), 55)
 
 
 def main():

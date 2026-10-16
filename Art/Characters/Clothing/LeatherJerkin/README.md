@@ -8,7 +8,7 @@ Pieces (one skeletal mesh, one material):
 
 - leather jerkin: torso with soft folds and sunken panel seams, stand-up collar, V-neck,
   centre placket with five buckled closure straps (rounded tips)
-- A-line skirt of eight sewn gores (no slits), flush with the jerkin at a slim stitched
+- A-line skirt of eight sewn gores (no slits) from the top of the hips, flush with the jerkin at a slim stitched
   waist welt with four belt loops (the separate `LeatherBelt` passes under them); a short
   mail skirt shows below the hem
 - two buckled shoulder straps holding the pauldrons, crossing in an X front and back,
