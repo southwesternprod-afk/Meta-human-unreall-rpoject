@@ -6,22 +6,24 @@ Medieval fantasy top for the MetaHuman **John_doe**, built by
 
 Pieces (one skeletal mesh, one material):
 
-- leather jerkin: torso with soft folds and sunken panel seams, short skirt (upper thigh,
-  made to go over trousers) with front/back slits, stand-up collar, V-neck, waist band,
-  centre placket with five buckled closure straps; riveted mail fauld showing through
-  the skirt slits
-- two buckled shoulder straps holding the pauldrons: each goes over one shoulder,
-  across the chest, under the other armpit and up across the back (an X front and back)
-- quilted wool gambeson sleeves; riveted mail over the upper arms and under the V-neck
+- leather jerkin: torso with soft folds and sunken panel seams, stand-up collar, V-neck,
+  centre placket with five buckled closure straps (rounded tips)
+- A-line skirt of eight sewn gores (no slits), flush with the jerkin at a slim stitched
+  waist welt with four belt loops; a short mail skirt shows below the hem
+- two buckled shoulder straps holding the pauldrons, crossing in an X front and back,
+  each with its free end through the buckle and held by a keeper
+- quilted wool gambeson sleeves; riveted mail over the upper arms and at the throat,
+  edged with a border of brass rings
 - leather bracers with three buckled straps each
-- laminated steel pauldrons (cap + four lames, riveted) with an embossed fleur-de-lis,
-  shaped as slightly flattened domes that clear the straps and mail underneath
+- laminated steel pauldrons (cap + four lames, rolled edges, riveted) with an embossed
+  fleur-de-lis, plus an arming strap round each upper arm
+- rounded forged-wire buckles throughout
 
 Gloves, belt and pouches are separate items (not included here).
 
 | | |
 |---|---|
-| Mesh | ~138k verts, skinned to the MetaHuman body skeleton (341 bones, max 8 influences) |
+| Mesh | ~109k tris / ~56k verts at LOD0 (game mesh; detail baked from a ~260k-tri source), skinned to the MetaHuman body skeleton (341 bones, max 8 influences); Unreal builds LOD1-3 on import |
 | Material | `M_LeatherJerkin` (single texture set) |
 | Textures (4096²) | `T_LeatherJerkin_BaseColor` (sRGB), `T_LeatherJerkin_Normal` (DirectX), `T_LeatherJerkin_ORM` (R AO, G roughness, B metallic) |
 
@@ -35,8 +37,11 @@ Gloves, belt and pouches are separate items (not included here).
    generated around the bones / on the jerkin surface.
 3. Skin weights come from the body via robust weight transfer with inpainting
    (`Tools/ThirdParty/RobustSkinWeights`); steel plates, buckles and rivets are rigid.
-4. Leather pieces are 3-4.5 mm thick with rolled, rounded edges; the jerkin body is
-   subdivided and displaced with folds (waist, armpits, back) and seams.
+4. Leather pieces are 3-4.5 mm thick with rolled, rounded edges. The script builds two
+   versions: a bake source (subdivided torso and sleeves with folds) and the game mesh
+   (game-resolution torso and sleeves, gambeson hidden under mail and bracers removed).
+   The source is baked onto the game mesh (high-to-low), so the folds live in the normal
+   map. Hidden inner faces get less texture space; outer surfaces are reported in px/cm.
 5. Textures are baked with the repo's `aaa-materials` plugin (`plugins/aaa-materials`):
    leather, blackened steel, quilted wool and mail presets with wear and grime, plus the
    jerkin's own seams, stitching, crest and etched borders. Unused texture space is
