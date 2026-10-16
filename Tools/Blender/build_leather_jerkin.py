@@ -222,101 +222,119 @@ def bottom_and_top_loops(bm):
     return bottom, top
 
 
+# Skirt panels: split angles (radians from centre front, counter-clockwise) and the
+# height where each slit opens. Front, left hip, back, right hip.
+SKIRT_SPLITS = ((0.0, 0.900), (math.pi / 2, 0.890), (math.pi, 0.885), (3 * math.pi / 2, 0.890))
+SKIRT_TOP_Z = WAIST_Z + 0.006   # tucked under the waist welt
+CORNER_LIFT = 0.028             # panels' bottom corners are rounded up by this much
+PANEL_BELLY = 0.010             # panel hems dip this much lower in the middle
+
+
 def build_skirt(body, torso_bm):
+    """Four leather panels (front, back and both hips) hanging from the waist seam:
+    each flares on its own with a slight outward belly, rounded bottom corners and
+    soft drape folds; the slits between them open towards the hem. A mail skirt
+    hangs inside and shows through the slits and under the corners."""
     bottom, _ = bottom_and_top_loops(torso_bm)
     pts = [v.co.copy() for v in bottom]
     c = np.mean([p[:2] for p in pts], axis=0)
-    n = 200
-    ring = resample_loop([Vector((p.x, p.y, WAIST_Z + 0.012)) for p in pts], n)
+    n = 240
+    ring = resample_loop([Vector((p.x, p.y, SKIRT_TOP_Z)) for p in pts], n)
     # order by angle starting at the front, counter-clockwise
     ring.sort(key=lambda p: (angle_of(p, c) - FRONT) % (2 * math.pi))
     angles = np.array([(angle_of(p, c) - FRONT) % (2 * math.pi) for p in ring])
     r_top = np.array([math.hypot(p.x - c[0], p.y - c[1]) for p in ring]) - 0.002
 
     arms = body.family(ARMS)
-    legs = body.co[(body.co[:, 2] < WAIST_Z) & (body.co[:, 2] > HEM_Z - 0.05) & (arms < 0.2)]
+    legs = body.co[(body.co[:, 2] < WAIST_Z) & (body.co[:, 2] > HEM_Z - 0.06) & (arms < 0.2)]
     leg_ang = (np.arctan2(legs[:, 1] - c[1], legs[:, 0] - c[0]) - FRONT) % (2 * math.pi)
     leg_r = np.hypot(legs[:, 0] - c[0], legs[:, 1] - c[1])
 
-    zs = np.linspace(WAIST_Z + 0.012, HEM_Z, 25)
+    # radius profile on a height grid: flare from the waist, clear of the hips and thighs
+    zg = np.linspace(SKIRT_TOP_Z, HEM_Z - PANEL_BELLY - 0.004, 30)
+    span = SKIRT_TOP_Z - zg[-1]
     radii = []
     prev = r_top
-    for i, zr in enumerate(zs):
-        t = i / (len(zs) - 1)
-        base = r_top * (1 + 0.18 * t ** 1.2)
+    for zr in zg:
+        t = (SKIRT_TOP_Z - zr) / span
+        base = r_top * (1 + 0.26 * t ** 1.3)
         sel = np.abs(legs[:, 2] - zr) < 0.012
         req = np.zeros(n)
         for j, a in enumerate(angles):
             d = np.abs((leg_ang[sel] - a + math.pi) % (2 * math.pi) - math.pi)
             near = leg_r[sel][d < math.radians(5)]
-            req[j] = near.max() + 0.028 if len(near) else 0.0
-        r = circular_smooth(np.maximum(base, req), k=4, passes=3)
+            # flush with the jerkin at the seam, more room over the thighs
+            req[j] = near.max() + 0.013 + 0.013 * t if len(near) else 0.0
+        r = circular_smooth(np.maximum(base, req), k=5, passes=3)
         r = np.maximum(r, prev)           # skirts only flare outwards going down
         radii.append(r)
         prev = r
-    # soft drape folds growing towards the hem, and a slightly uneven hem
-    folds = np.array([0.55 * math.sin(7 * a + 1.3) + 0.35 * math.sin(12 * a + 0.4) for a in angles])
-    hem_wave = np.array([0.004 * math.sin(5 * a + 0.7) + 0.002 * math.sin(11 * a + 2.1) for a in angles])
-    for i in range(len(zs)):
-        t = i / (len(zs) - 1)
+    radii = np.array(radii)
+    # soft, irregular drape folds growing towards the hem
+    folds = np.array([0.5 * math.sin(7 * a + 1.3) + 0.3 * math.sin(12 * a + 0.4) for a in angles])
+    for i, zr in enumerate(zg):
+        t = (SKIRT_TOP_Z - zr) / span
         wobble = np.array([mnoise.noise(Vector((2 * math.cos(a), 2 * math.sin(a), 1.5 * t))) for a in angles])
-        radii[i] = radii[i] + (0.0008 + 0.0060 * t ** 1.2) * (folds + 0.3 * wobble)
+        radii[i] += (0.0006 + 0.0095 * t ** 1.3) * (folds + 0.45 * wobble)
 
-    def point(j, i, gap=0.0, flare=0.0):
-        a = angles[j] + FRONT
-        t = i / (len(zs) - 1)
-        r = radii[i][j] + flare
+    def radius_at(z, j):
+        return float(np.interp(-z, -zg, radii[:, j]))
+
+    def at(j, z, r, gap=0.0):
+        a = angles[j % n] + FRONT
         tangent = Vector((-math.sin(a), math.cos(a), 0))
-        z = zs[i] + hem_wave[j] * t * t
         return Vector((c[0] + r * math.cos(a), c[1] + r * math.sin(a), z)) + tangent * gap
 
-    # Two panels (left: front->back through +X, right: back->front through -X)
-    # so the front and back seams can open into slits near the hem.
-    front_slit_top, back_slit_top = 0.875, 0.855
-    half = n // 2
-
     def slit_gap(z, top):
-        return 0.0 if z >= top else 0.004 + 0.016 * (top - z) / (top - HEM_Z)
+        return 0.0 if z >= top else 0.004 + 0.022 * (top - z) / (top - HEM_Z)
 
+    split_cols = [int(np.argmin(np.abs((angles - a + math.pi) % (2 * math.pi) - math.pi))) for a, _ in SKIRT_SPLITS]
+    col_arc = 2 * math.pi / n * float(np.mean(r_top))
+    rows_n = 24
     bm = bmesh.new()
-    panels = []
-    for cols, start_slit, end_slit in ((range(0, half + 1), front_slit_top, back_slit_top),
-                                       (range(half, n + 1), back_slit_top, front_slit_top)):
-        cols = list(cols)
-        rows = []
-        for i in range(len(zs)):
-            row = []
-            for k, j in enumerate(cols):
-                g, flare = 0.0, 0.0
+    for k, (j0, (_, top0)) in enumerate(zip(split_cols, SKIRT_SPLITS)):
+        j1 = split_cols[(k + 1) % len(split_cols)]
+        top1 = SKIRT_SPLITS[(k + 1) % len(SKIRT_SPLITS)][1]
+        m = (j1 - j0) % n
+        columns = []
+        for kk in range(m + 1):
+            j = j0 + kk
+            u = kk / m
+            edge = min(kk, m - kk) * col_arc                      # distance to the nearest slit
+            hem = HEM_Z + CORNER_LIFT * (1 - smooth01(edge / 0.05)) - PANEL_BELLY * math.sin(math.pi * u)
+            col = []
+            for i in range(rows_n):
+                t = i / (rows_n - 1)
+                z = SKIRT_TOP_Z + (hem - SKIRT_TOP_Z) * t
+                r = radius_at(z, j % n) + 0.012 * math.sin(math.pi * u) * t ** 1.5   # panel belly
+                gap = 0.0
                 # the panel edges along a slit part and curl slightly outwards
                 for dk, curl in ((0, 1.0), (1, 0.5), (2, 0.2)):
-                    if k == dk:
-                        g = slit_gap(zs[i], start_slit) if dk == 0 else 0.0
-                        flare = 0.35 * curl * slit_gap(zs[i], start_slit) if zs[i] < start_slit else 0.0
-                    elif k == len(cols) - 1 - dk:
-                        g = -slit_gap(zs[i], end_slit) if dk == 0 else 0.0
-                        flare = 0.35 * curl * slit_gap(zs[i], end_slit) if zs[i] < end_slit else 0.0
-                row.append(point(j % n, i, g, flare))
-            rows.append(row)
-        _, vr = loft_grid(rows, closed=False, bm=bm)
-        panels.append(vr)
+                    if kk == dk and z < top0:
+                        gap = slit_gap(z, top0) if dk == 0 else 0.0
+                        r += 0.18 * curl * slit_gap(z, top0)
+                    elif kk == m - dk and z < top1:
+                        gap = -slit_gap(z, top1) if dk == 0 else 0.0
+                        r += 0.18 * curl * slit_gap(z, top1)
+                col.append(at(j, z, r, gap))
+            columns.append(col)
+        rows = [[columns[kk][i] for kk in range(m + 1)] for i in range(rows_n)]
+        loft_grid(rows, closed=False, bm=bm)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)   # closes the seams above the slits
     orient_outward(bm)
     piece = Piece("Skirt", bm, LEATHER, MAIN, thickness=0.0045)
 
-    # mail skirt hanging inside the leather one, seen through the slits
+    # mail skirt hanging inside the leather one, seen through the slits and under the corners
     mail_rows = []
-    for i in range(len(zs)):
-        z = zs[i] - 0.012 * i / (len(zs) - 1)
-        mail_rows.append([Vector((c[0] + (radii[i][j] - 0.0075) * math.cos(angles[j] + FRONT),
-                                  c[1] + (radii[i][j] - 0.0075) * math.sin(angles[j] + FRONT), z))
-                          for j in range(n)])
+    for i in range(rows_n):
+        z = SKIRT_TOP_Z + (HEM_Z - 0.004 - SKIRT_TOP_Z) * i / (rows_n - 1)
+        mail_rows.append([at(j, z, radius_at(z, j) - 0.0075) for j in range(n)])
     mbm, mvr = loft_grid(mail_rows)
     orient_outward(mbm)
     fauld = Piece("MailFauld", mbm, MAIL)
     for i, row in enumerate(mvr):
         for j, v in enumerate(row):
-            fauld.pc[v] = (angles[j] * float(np.mean(radii[i])), v.co.z)
+            fauld.pc[v] = (angles[j] * float(np.mean(r_top)), v.co.z)
     return piece, fauld
 
 
@@ -538,14 +556,17 @@ def build_shoulder_straps(body, torso_bm):
 
 
 def build_waist_band(torso_bm, skirt_bm):
-    """Leather band over the seam between the jerkin body and the skirt."""
+    """Slim stitched welt over the seam between the jerkin body and the skirt panels:
+    a rounded leather strip that follows the body's contour (a belt goes over it)."""
     bvhs = [BVHTree.FromBMesh(torso_bm), BVHTree.FromBMesh(skirt_bm)]
     c = np.mean([v.co[:2] for v in torso_bm.verts if abs(v.co.z - WAIST_Z) < 0.02], axis=0)
-    seg = 128
+    seg = 160
+    profile = ((-0.013, 0.0006), (-0.0105, 0.0024), (-0.005, 0.0034), (0.009, 0.0034),
+               (0.0145, 0.0024), (0.017, 0.0006))                    # rounded cross-section
     rows = []
-    for z, lift in ((WAIST_Z - 0.022, 0.0015), (WAIST_Z - 0.018, 0.0055), (WAIST_Z + 0.026, 0.0055),
-                    (WAIST_Z + 0.030, 0.0015)):
-        row = []
+    for dz, lift in profile:
+        z = WAIST_Z + dz
+        rr = []
         for j in range(seg):
             a = 2 * math.pi * j / seg
             d = Vector((math.cos(a), math.sin(a), 0))
@@ -556,26 +577,18 @@ def build_waist_band(torso_bm, skirt_bm):
                 hit = bvh.ray_cast(o + d * 0.6, -d, 0.6)
                 if hit[0] is not None:
                     r = max(r, (hit[0] - o).length)
-            row.append(o + d * (r + lift))
-        rows.append(row)
+            rr.append(r)
+        rr = circular_smooth(rr, k=2, passes=2)
+        rows.append([Vector((c[0], c[1], z)) + Vector((math.cos(2 * math.pi * j / seg),
+                                                       math.sin(2 * math.pi * j / seg), 0)) * (rr[j] + lift)
+                     for j in range(seg)])
     bm, vr = loft_grid(rows)
     orient_outward(bm)
-    piece = Piece("WaistBand", bm, LEATHER, STRAP, thickness=0.0035)
+    piece = Piece("WaistBand", bm, LEATHER, STRAP, thickness=0.003)
     for i, row in enumerate(vr):
         for j, v in enumerate(row):
             piece.pc[v] = (2 * math.pi * j / seg * 0.2, v.co.z)
-    # decorative rivets around the band, in pairs, seated on its surface
-    band_bvh = BVHTree.FromBMesh(bm)
-    rivets = []
-    mid = [(a.co + b.co) / 2 for a, b in zip(vr[1], vr[2])]
-    for j in range(0, seg, 8):
-        out = Vector((mid[j].x - c[0], mid[j].y - c[1], 0)).normalized()
-        for dz in (-0.009, 0.013):
-            hit = band_bvh.ray_cast(mid[j] + Vector((0, 0, dz)) + out * 0.05, -out, 0.1)
-            if hit[0] is not None:
-                nrm = hit[1] if hit[1].dot(out) > 0 else -hit[1]
-                rivets.append(rivet(hit[0] + nrm * 0.0002, nrm, r=0.0034))
-    return piece, rivets
+    return piece
 
 
 # --- arms --------------------------------------------------------------------------
@@ -907,10 +920,9 @@ def build_all(body):
     torso_bm = build_torso(body)
     torso = Piece("Torso", torso_bm, LEATHER, MAIN, thickness=0.004)
     skirt, mail_fauld = build_skirt(body, torso_bm)
-    band, band_rivets = build_waist_band(torso_bm, skirt.bm)
+    band = build_waist_band(torso_bm, skirt.bm)
     collar = build_collar(body, torso_bm)
     pieces = [torso, skirt, mail_fauld, collar, build_mail_gorget(body), band]
-    pieces += band_rivets
     pieces += build_front_details(torso_bm)
     straps = build_shoulder_straps(body, torso_bm)
     sleeves = build_sleeves(body)
