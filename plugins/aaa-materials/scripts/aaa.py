@@ -6,6 +6,7 @@
     python3 aaa.py validate Art/Materials/LeatherBrown --tileable
     python3 aaa.py ball Art/Materials/LeatherBrown LeatherBrown --tiling 2
     python3 aaa.py unreal Art/Materials/LeatherBrown LeatherBrown --tiling 2
+    python3 aaa.py pad Art/Characters/Clothing/LeatherJerkin/Textures
     python3 aaa.py sheet out.png a_Ball.png b_Ball.png ...
 
 `tile` bakes a seamless texture set from a preset, renders a material ball,
@@ -91,6 +92,14 @@ def cmd_unreal(args):
                                      dest=args.dest, tiling=args.tiling))
 
 
+def cmd_pad(args):
+    from aaa_materials import padding
+    names = [args.name] if args.name else [b.name[2:-len("_BaseColor.png")]
+                                           for b in sorted(Path(args.directory).glob("T_*_BaseColor.png"))]
+    for name in names:
+        print(f"{name}: padded {100 * padding.pad_set(args.directory, name):.1f}% of the texture")
+
+
 def cmd_sheet(args):
     from aaa_materials import lookdev
     print(lookdev.contact_sheet(args.images, args.out, columns=args.columns))
@@ -133,6 +142,10 @@ def main(argv=None):
     u.add_argument("--dest")
     u.add_argument("--tiling", type=float, default=1.0)
 
+    pd = sub.add_parser("pad", help="fill unused texture space with edge colours (fixes dark mip seams)")
+    pd.add_argument("directory")
+    pd.add_argument("--name")
+
     s = sub.add_parser("sheet", help="tile material-ball renders into one image")
     s.add_argument("out")
     s.add_argument("images", nargs="+")
@@ -140,7 +153,7 @@ def main(argv=None):
 
     args = ap.parse_args(argv)
     return {"presets": cmd_presets, "tile": cmd_tile, "validate": cmd_validate, "ball": cmd_ball,
-            "unreal": cmd_unreal, "sheet": cmd_sheet}[args.cmd](args) or 0
+            "unreal": cmd_unreal, "pad": cmd_pad, "sheet": cmd_sheet}[args.cmd](args) or 0
 
 
 if __name__ == "__main__":

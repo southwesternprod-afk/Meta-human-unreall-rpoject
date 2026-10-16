@@ -158,7 +158,7 @@ def steel_blackened(c, wear=0.5, dirt=0.4, rust=0.25, scale=1.0, P=None, P2=None
 
     oxide = g.mix_color(srgb("#2a2b2e"), srgb("#3a3b3f"), tone)
     oxide = g.mix_color(oxide, srgb("#232426"), g.mul(dents, 0.4))
-    base = g.mix_color(oxide, srgb("#b9bbbe"), bare)
+    base = g.mix_color(oxide, srgb("#b9bbbe"), g.smooth(bare, 0.2, 0.5))   # fully bright where metal
     base = g.mix_color(base, srgb("#6b3317"), rustm)
     base = g.mix_color(base, srgb("#26221e"), g.mul(grime, 0.8))
     rough = g.mix_float(g.add(0.38, g.mul(tone, 0.14)), 0.24, bare)
@@ -244,7 +244,7 @@ def chainmail(c, ring=0.0085, rust=0.4, dirt=0.5, oxide=0.6, P=None, P2=None, uv
     solid = g.smooth(rings, 0.25, 0.45)
     crest = g.smooth(rings, 0.55 + 0.35 * oxide, 0.75 + 0.2 * oxide)      # bare wire tops
     ox_col = g.mix_color(srgb("#2e2f31"), srgb("#45464a"), var)
-    base = g.mix_color(srgb("#262422"), g.mix_color(ox_col, metal_col, crest), solid)
+    base = g.mix_color(srgb("#262422"), g.mix_color(ox_col, metal_col, g.smooth(crest, 0.15, 0.5)), solid)
     base = g.mix_color(base, srgb("#5e2c12"), g.clamp01(rustm))
     base = g.mix_color(base, srgb("#262220"), g.mul(grime, 0.6))
     rough = g.mix_float(g.mix_float(0.85, g.mix_float(0.5, 0.34, crest), solid), 0.88, g.clamp01(rustm))

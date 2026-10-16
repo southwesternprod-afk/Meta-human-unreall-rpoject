@@ -89,6 +89,13 @@ def validate(name, files, tileable=False):
     else:
         r.add("WARN", "size", f"maps differ in size: {size}, {osize}, {nsize}")
 
+    # ignore unused texture space (pure black in both maps) but report it: it should be padded
+    used = ~((base.max(-1) == 0) & (orm.max(-1) == 0))
+    empty = 100.0 - _pct(used)
+    if empty > 0.5:
+        r.add("WARN", "padding", f"{empty:.1f}% of the texture is unpadded black space "
+                                 "(mip-maps will bleed dark seams; run `aaa.py pad`)")
+    base, orm, nrm = base[used], orm[used], nrm[used]
     ao, rough, metal = orm[..., 0], orm[..., 1], orm[..., 2]
     is_metal = metal > 0.9
     is_diel = metal < 0.1
@@ -127,7 +134,7 @@ def validate(name, files, tileable=False):
     length = np.linalg.norm(v, axis=-1)
     bad_len = _pct(np.abs(length - 1) > 0.15)
     neg_z = _pct(v[..., 2] < 0)
-    detail = float(v[..., :2].std(axis=(0, 1)).mean())        # spread of surface slopes
+    detail = float(v[:, :2].std(axis=0).mean())               # spread of surface slopes
     empty = detail < 0.004
     lvl = "FAIL" if neg_z > 1 else "WARN" if bad_len > 5 or empty else "PASS"
     r.add(lvl, "normal", f"{bad_len:.1f}% not unit length, {neg_z:.2f}% negative Z, slope spread {detail:.3f}"
@@ -139,7 +146,8 @@ def validate(name, files, tileable=False):
 
     # --- tiling
     if tileable:
-        for label, arr in (("BaseColor", base), ("Normal", nrm)):
+        base_img, nrm_img = _load(files["BaseColor"])[0], _load(files["Normal"])[0]
+        for label, arr in (("BaseColor", base_img), ("Normal", nrm_img)):
             seam = np.abs(arr[:, 0] - arr[:, -1]).mean() + np.abs(arr[0] - arr[-1]).mean()
             inner = np.abs(arr[:, 1] - arr[:, 2]).mean() + np.abs(arr[1] - arr[2]).mean()
             ratio = seam / max(inner, 1e-6)

@@ -14,7 +14,8 @@ Pieces (one skeletal mesh, one material):
   across the chest, under the other armpit and up across the back (an X front and back)
 - quilted wool gambeson sleeves; riveted mail over the upper arms and under the V-neck
 - leather bracers with three buckled straps each
-- laminated steel pauldrons (cap + four lames, riveted) with an embossed fleur-de-lis
+- laminated steel pauldrons (cap + four lames, riveted) with an embossed fleur-de-lis,
+  shaped as slightly flattened domes that clear the straps and mail underneath
 
 Gloves, belt and pouches are separate items (not included here).
 
@@ -36,8 +37,11 @@ Gloves, belt and pouches are separate items (not included here).
    (`Tools/ThirdParty/RobustSkinWeights`); steel plates, buckles and rivets are rigid.
 4. Leather pieces are 3-4.5 mm thick with rolled, rounded edges; the jerkin body is
    subdivided and displaced with folds (waist, armpits, back) and seams.
-5. Textures are baked procedurally (leather grain, creases, seams and stitching, wool
-   quilting, mail rings, steel wear) with `Tools/Blender/weapon_textures.py`.
+5. Textures are baked with the repo's `aaa-materials` plugin (`plugins/aaa-materials`):
+   leather, blackened steel, quilted wool and mail presets with wear and grime, plus the
+   jerkin's own seams, stitching, crest and etched borders. Unused texture space is
+   edge-padded, and the set is checked with the plugin's PBR validator
+   (`python3 plugins/aaa-materials/scripts/aaa.py validate Textures`).
 6. Exported onto the untouched skeleton and verified by re-importing next to the body
    (identical bones) and posing both.
 

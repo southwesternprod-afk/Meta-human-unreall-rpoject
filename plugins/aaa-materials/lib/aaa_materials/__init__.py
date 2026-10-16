@@ -11,7 +11,7 @@ validate (PBR checks, no Blender needed).
 
 import importlib
 
-__all__ = ["engine", "library", "weathering", "lookdev", "unreal", "validate"]
+__all__ = ["engine", "library", "weathering", "lookdev", "unreal", "validate", "padding"]
 
 
 def __getattr__(name):            # lazy: validate/unreal work without bpy installed

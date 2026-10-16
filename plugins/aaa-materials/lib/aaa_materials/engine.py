@@ -22,6 +22,8 @@ from pathlib import Path
 import bpy  # noqa: F401  (must be imported before mathutils/bmesh users)
 import numpy as np
 
+from .padding import empty_mask, pad
+
 BAKE_MARGIN = 16
 
 
@@ -281,7 +283,7 @@ class Context:
 # --- material assembly ----------------------------------------------------------
 # Linear luminance limits matching validate.py: non-metal sRGB 30..240, metal >= ~175.
 SAFE_DIELECTRIC = (0.0135, 0.85)
-SAFE_METAL_MIN = 0.42
+SAFE_METAL_MIN = 0.47
 
 
 def pbr_safe(g, base, metal):
@@ -427,6 +429,8 @@ def bake(obj, out_dir, name, layers_fn, res=2048, tileable=False, mask_scale=1.0
     if tileable:
         for key in raw:
             raw[key] = make_seamless(raw[key])
+    else:
+        raw = pad(raw, empty_mask(raw["base"], raw["orm"]))
         n = raw["normal_gl"][..., :3] * 2 - 1
         n /= np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-6)
         raw["normal_gl"][..., :3] = n * 0.5 + 0.5
