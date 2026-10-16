@@ -6,7 +6,7 @@ A separate skeletal mesh on the MetaHuman skeleton (equip / remove it in game li
 jerkin and the belt), worn under the jerkin's skirt. Pieces (one mesh, one texture set):
   - dark leather trousers: straight legs that hang from the knee and calf instead of
     hugging the shin, sunken outseams, inseams and rise seams with double top-stitching,
-    a dark wool crotch gusset, turned hems stacking above the boot, compression folds
+    a dark canvas crotch gusset, turned hems stacking above the boot, compression folds
     behind the knee and drag folds from the crotch
   - a sewn-on waistband with four belt loops and a buttoned fly
   - padded boiled-leather knee cops, each strapped round the leg above and below the
@@ -49,13 +49,13 @@ INNER_KEEP = 0.045                          # inside facing kept at the hems and
 GAME_RATIO = 0.5                            # game mesh: decimate the once-subdivided shell to this
 TAPER = 0.05                                # below the knee the legs narrow 5 mm per 10 cm
 BAND_H = 0.036                              # waistband height
-GUSSET_W = 0.030                            # half-width of the wool gusset at the crotch
+GUSSET_W = 0.030                            # half-width of the canvas gusset at the crotch
 GUSSET_LOW_Z = 0.60                         # where the gusset runs out down the inseam
 FLY_X = 0.004                               # the fly flap overlaps to the wearer's left
 LEATHER_TROUSERS = "#3d2d22"                # darker than the jerkin, like the reference
 LEATHER_KNEE = "#4b372a"
 LEATHER_STRAP = bj.LEATHER_STRAP
-WOOL_GUSSET = "#37382f"
+CANVAS_GUSSET = "#3b3a2e"
 MUD = "#6f5f4b"
 
 
@@ -220,6 +220,30 @@ def drape(bm, legs):
     bm.normal_update()
 
 
+def bridge_seat(bm):
+    """Leather spans the cleft between the buttocks: in horizontal slices, the back of
+    the seat is pushed out to the convex outline of the slice."""
+    slices = {}
+    for v in bm.verts:
+        if v.co.y > -0.02 and abs(v.co.x) < 0.14 and 0.765 < v.co.z < WAIST_BACK_Z + 0.04:
+            slices.setdefault(int(round(v.co.z / 0.006)), []).append(v)
+    for sl in slices.values():
+        pts = sorted((v.co.x, v.co.y) for v in sl)
+        hull = []                                  # upper hull (towards +y, the back)
+        for q in pts:
+            while len(hull) >= 2 and ((hull[-1][0] - hull[-2][0]) * (q[1] - hull[-2][1])
+                                      - (hull[-1][1] - hull[-2][1]) * (q[0] - hull[-2][0])) >= 0:
+                hull.pop()
+            hull.append(q)
+        hx, hy = np.array([h[0] for h in hull]), np.array([h[1] for h in hull])
+        for v in sl:
+            if abs(v.co.x) < 0.075:
+                y = float(np.interp(v.co.x, hx, hy)) - 0.0015      # a little sag across the gap
+                if y > v.co.y:
+                    v.co.y = y
+    bm.normal_update()
+
+
 def cut(bm, co, normal, keep_below):
     geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
     bmesh.ops.bisect_plane(bm, geom=geom, plane_co=co, plane_no=normal,
@@ -235,6 +259,7 @@ def shell_base(body, field, legs):
     mask = (arms < 0.3) & (z > HEM_BACK_Z - 0.02) & (z < WAIST_BACK_Z + 0.035)
     bm = ck.shell_from_faces(body, body.region_faces(mask), offset=EASE, smooth_iters=0)
     relax_shell(body, field, bm, 40, 0.5, EASE * 0.85)
+    bridge_seat(bm)
     drape(bm, legs)
     relax_shell(body, field, bm, 4, 0.3, EASE * 0.85)
     slope = (WAIST_BACK_Z - WAIST_FRONT_Z) / (WAIST_BACK_Y - WAIST_FRONT_Y)
@@ -247,7 +272,7 @@ def shell_base(body, field, legs):
 
 def seam_fields(p, legs, crotch_z):
     """Distance to the nearest sewn seam (outseam, inseam, centre front/back rise, the
-    gusset's edge) and the signed distance into the wool gusset (> 0 inside)."""
+    gusset's edge) and the signed distance into the canvas gusset (> 0 inside)."""
     leg = leg_of(legs, p)
     phi, r = leg.polar(p)
     sd = r * abs(wrap(phi - math.pi / 2))                                  # outseam
@@ -282,12 +307,12 @@ def soften_trousers(body, field, bm, legs, crotch_z):
             d += 0.0027 * kb * cl * math.sin(2 * math.pi * (zk + 0.006 * mnoise.noise(p * 18.0)) / 0.021)
         # the leg stacks in soft rings above the hem
         zh = p.z - (HEM_FRONT_Z + HEM_BACK_Z) / 2
-        stack = smooth01((0.14 - zh) / 0.08) * smooth01((zh - 0.012) / 0.014)
+        stack = smooth01((0.16 - zh) / 0.08) * smooth01((zh - 0.012) / 0.014)
         if stack > 0:
             slant = zh + 0.018 * math.sin(phi + 0.6) + 0.02 * mnoise.noise(p * Vector((7, 7, 2)))
             wave = math.sin(2 * math.pi * slant / 0.045 + 2.4 * mnoise.noise(p * 3.0))
             amp = max(0.0, 0.25 + 0.9 * mnoise.noise(p * 5.0 + Vector((1, 4, 2))))
-            d += 0.0036 * stack * wave * amp * (0.65 + 0.35 * abs(math.cos(phi)))
+            d += 0.0052 * stack * wave * amp * (0.65 + 0.35 * abs(math.cos(phi)))
         # drag folds fanning from the crotch up and out over the front of the thighs
         dx, dz = abs(p.x) - 0.02, p.z - crotch_z
         dist = math.hypot(dx, dz)
@@ -512,7 +537,7 @@ def to_object(pieces, name):
 
 # --- texture recipe ----------------------------------------------------------------------------
 def trousers_layers(c):
-    """Dark leather trousers (tone 0), straps and band (1), knee cops (2), the wool
+    """Dark leather trousers (tone 0), straps and band (1), knee cops (2), the canvas
     gusset (inside the 'gusset' distance field) and blackened iron fittings."""
     g = c.g
     srgb = aaa.engine.srgb
@@ -561,29 +586,42 @@ def trousers_layers(c):
     cl = c.with_masks(edge=g.maxf(g.remap(ed, 0.0, 0.006, 1.0, 0.0), g.maxf(g.mul(piping, 0.5), g.mul(c.edge, 0.3))))
     main = tailor(L.leather(cl, color=LEATHER_TROUSERS, wear=0.5, dirt=0.6, grain_amount=0.4), LEATHER_TROUSERS)
     # the fronts of the thighs are rubbed paler and smoother; the lower legs carry dried mud
-    rubbed = g.mul(g.mul(g.remap(N["Y"], -0.35, -0.85), g.mul(g.remap(P["Z"], 0.52, 0.60), g.remap(P["Z"], 0.84, 0.74))),
-                   aaa.weathering.breakup(c, 7.0, 0.38, 0.62))
+    rubbed = g.mul(g.mul(g.remap(N["Y"], -0.25, -0.8), g.mul(g.remap(P["Z"], 0.50, 0.58), g.remap(P["Z"], 0.86, 0.74))),
+                   aaa.weathering.breakup(c, 4.0, 0.34, 0.6))
+    seat = g.mul(g.mul(g.remap(N["Y"], 0.3, 0.8), g.mul(g.remap(P["Z"], 0.78, 0.84), g.remap(P["Z"], 0.97, 0.92))),
+                 aaa.weathering.breakup(c, 5.0, 0.3, 0.6))
+    knee_pit = g.mul(g.mul(g.remap(N["Y"], 0.2, 0.7), g.mul(g.remap(P["Z"], 0.44, 0.49), g.remap(P["Z"], 0.6, 0.55))),
+                     aaa.weathering.breakup(c, 9.0, 0.35, 0.6))
     mud = g.mul(g.remap(P["Z"], 0.36, 0.13), aaa.weathering.breakup(c, 11.0, 0.36, 0.6))
     splat = g.mul(g.mul(g.remap(g.voronoi(g.mapping(c.P, (90, 90, 90)), 1.0), 0.0, 0.11, 1.0, 0.0),
                         g.remap(g.noise(c.P, 30.0, 2.0), 0.55, 0.62)), g.remap(P["Z"], 0.48, 0.2))
     mud = g.clamp01(g.maxf(mud, splat))
     col = srgb(LEATHER_TROUSERS)
-    base = g.mix_color(main.base, tuple(min(1.0, v * 1.45) for v in col[:3]) + (1.0,), g.mul(rubbed, 0.55))
+    base = g.mix_color(main.base, tuple(min(1.0, v * 1.5) for v in col[:3]) + (1.0,), g.mul(rubbed, 0.75))
+    base = g.mix_color(base, tuple(v * 0.8 for v in col[:3]) + (1.0,), g.mul(seat, 0.6))
+    base = g.mix_color(base, tuple(v * 0.6 for v in col[:3]) + (1.0,), g.mul(knee_pit, 0.6))
     base = g.mix_color(base, srgb(MUD), g.mul(mud, 0.85))
-    rough = g.mix_float(g.mix_float(main.rough, 0.40, g.mul(rubbed, 0.6)), 0.93, mud)
+    rough = g.mix_float(main.rough, 0.38, g.mul(rubbed, 0.7))
+    rough = g.mix_float(g.mix_float(rough, 0.40, g.mul(seat, 0.6)), 0.93, mud)
     height = g.add(main.height, g.mul(mud, 0.35))
     main = aaa.engine.Surface(base, rough, 0.0, height, main.bump)
 
     strap = tailor(L.leather(cl, color=LEATHER_STRAP, wear=0.6, dirt=0.5, grain_amount=0.35, scale=1.15), LEATHER_STRAP)
     knee = tailor(L.leather(cl, color=LEATHER_KNEE, wear=0.7, dirt=0.5, grain_amount=0.45), LEATHER_KNEE)
-    wool = L.wool(c, color=WOOL_GUSSET, quilted=False, wear=0.35, dirt=0.6)
+    border = g.mul(g.maxf(near(ed, 0.0062, 0.0009), near(ed, 0.0108, 0.0009)), dots)
+    channel = g.maxf(near(ed, 0.0062, 0.0016), near(ed, 0.0108, 0.0016))
+    knee = aaa.engine.Surface(g.mix_color(g.mix_color(knee.base, tuple(v * 0.6 for v in srgb(LEATHER_KNEE)[:3]) + (1.0,),
+                                                      g.mul(channel, 0.4)), srgb("#a08a6a"), border),
+                              g.mix_float(knee.rough, 0.8, border), 0.0,
+                              g.sub(g.add(knee.height, g.mul(border, 0.4)), g.mul(channel, 1.4)), knee.bump)
+    canvas = L.linen(c, color=CANVAS_GUSSET, thread=0.0012, wear=0.3, dirt=0.6, P2=c.attr_vec("pc"))
     in_gusset = g.math("GREATER_THAN", gus, 0.0)
-    wool = aaa.engine.Surface(g.mix_color(wool.base, srgb(bj.STITCH), seam_stitch), wool.rough,
-                              wool.metal, g.sub(wool.height, g.mul(seam, 1.2)), wool.bump)
+    canvas = aaa.engine.Surface(g.mix_color(canvas.base, srgb(bj.STITCH), seam_stitch), canvas.rough,
+                                canvas.metal, g.sub(canvas.height, g.mul(seam, 1.2)), canvas.bump)
 
     steel_edge = g.maxf(g.mul(c.edge, 0.5), g.mul(g.remap(ed, 0.0, 0.0016, 1.0, 0.0), 0.8))
     steel = L.steel_blackened(c.with_masks(edge=steel_edge), wear=0.5, dirt=0.5, rust=0.35, rub=0.0)
-    return [(None, main), (is_strap, strap), (is_knee, knee), (in_gusset, wool), (c.is_value(part, STEEL), steel)]
+    return [(None, main), (is_strap, strap), (is_knee, knee), (in_gusset, canvas), (c.is_value(part, STEEL), steel)]
 
 
 # --- output ------------------------------------------------------------------------------------

@@ -7,7 +7,7 @@ game. Built by `Tools/Blender/build_leather_trousers.py` to sit under the jerkin
 
 - dark leather legs, straight cut: they hang from the knee and the calf instead of
   hugging the shin, and stack in soft breaks above the hem (boots go over or under)
-- sunken outseams, inseams and rise seams with double top-stitching; a dark wool
+- sunken outseams, inseams and rise seams with double top-stitching; a dark canvas
   gusset in the crotch; compression folds behind the knees; drag folds from the crotch
 - sewn-on waistband with four belt loops and a buttoned fly
 - padded boiled-leather knee cops, strapped round the leg above and below the knee
