@@ -162,7 +162,8 @@ def soften_leather(body, bm):
         # compression folds above the waist seam, broken into clusters; flatter
         # in front where the closure straps hold the leather taut
         zr = p.z - WAIST_Z
-        band = smooth01((0.17 - zr) / 0.12) * smooth01(zr / 0.02)
+        # (starting above the belt line: a worn belt pins the leather flat under it)
+        band = smooth01((0.19 - zr) / 0.12) * smooth01((zr - 0.030) / 0.02)
         if band > 0:
             cluster = smooth01((mnoise.noise(p * 7.0 + Vector((5, 2, 0))) + 0.15) / 0.5)
             taut = 0.35 if (p.y < 0 and abs(p.x) < 0.08) else 1.0
@@ -997,24 +998,70 @@ def build_arming_straps(body, garment):
     return pieces
 
 
+# The separate belt (build_leather_belt.py) is shaped here so the jerkin's loops and
+# the belt always agree on where it sits.
+BELT_W = 0.044            # belt width (m)
+BELT_T = 0.0045           # belt leather thickness
+BELT_Z = WAIST_Z + 0.002  # centred on the waist welt
+BELT_GAP = 0.002          # air between the welt/jerkin and the belt (covers game-mesh deviation)
+
+
+def outermost(bvhs, o, d, reach=0.6):
+    """Distance from `o` along `d` to the outermost of several surfaces."""
+    r = 0.0
+    for bvh in bvhs:
+        hit = bvh.ray_cast(o + d * reach, -d, reach)
+        if hit[0] is not None:
+            r = max(r, (hit[0] - o).length)
+    return r
+
+
+def belt_profile(bvhs, center, n=192):
+    """The belt's outer face round the waist: (angles from the front, radius, tilt).
+    Radius at angle j and height k (-1 lower edge .. 1 upper edge) = base[j] + tilt[j] * k.
+    A stiff belt: flat across its width, taut around the body (bridging hollows such as
+    the small of the back), resting on the outermost of welt / jerkin / skirt."""
+    angles = np.array([2 * math.pi * j / n for j in range(n)])
+    ka = np.linspace(-1.08, 1.08, 11)                     # rows underneath, incl. rounded edges
+    rk = np.zeros((n, len(ka)))
+    for j, th in enumerate(angles):
+        a = FRONT + th
+        d = Vector((math.cos(a), math.sin(a), 0.0))
+        for i, k in enumerate(ka):
+            rk[j, i] = outermost(bvhs, Vector((center[0], center[1], BELT_Z + k * BELT_W / 2)), d)
+    tilt = circular_smooth((rk[:, -1] - rk[:, 0]) / 2, k=6, passes=4)
+    base = (rk - tilt[:, None] * ka[None, :]).max(1)
+    for _ in range(120):                                  # taut: bridges the hollows
+        base = np.maximum(base, circular_smooth(base, k=3, passes=1))
+    base = np.maximum(circular_smooth(base, k=2, passes=1), base) + BELT_GAP + BELT_T
+    return angles, base, tilt
+
+
 def build_belt_loops(bvhs, center):
-    """Four leather belt loops over the waist welt, ready for the separate belt."""
+    """Four leather belt loops over the waist welt. They ride over the separate belt
+    (see belt_profile) and still read as loops when the belt is taken off."""
     pieces = []
+    angles, base, tilt = belt_profile(bvhs, center)
+    lo, hi = BELT_Z - BELT_W / 2 - 0.0035, BELT_Z + BELT_W / 2 + 0.0035   # belt + rounded edges
     for deg in (62, 128, -128, -62):                          # around from the centre front
         a = FRONT + math.radians(deg)
         d = Vector((math.cos(a), math.sin(a), 0))
-        samples = []
-        for z in np.linspace(WAIST_Z - 0.026, WAIST_Z + 0.030, 12):
-            o = Vector((center[0], center[1], z))
-            r = 0.0
-            for bvh in bvhs:
-                hit = bvh.ray_cast(o + d * 0.6, -d, 0.6)
-                if hit[0] is not None:
-                    r = max(r, (hit[0] - o).length)
-            samples.append((o + d * r, d))
-        lifts = [0.0006 + 0.0022 * math.sin(math.pi * t) ** 0.5 for t in np.linspace(0, 1, len(samples))]
-        samples = [(loc + nrm * (lf - 0.0006), nrm) for (loc, nrm), lf in zip(samples, lifts)]
-        loop, _ = surface_ribbon(samples, 0.016, 0.0006, f"BeltLoop_{deg}", STRAP, thickness=0.0025)
+        th = math.radians(deg) % (2 * math.pi)
+        b = float(np.interp(th, np.append(angles, 2 * math.pi), np.append(base, base[0])))
+        t = float(np.interp(th, np.append(angles, 2 * math.pi), np.append(tilt, tilt[0])))
+        zs = np.linspace(WAIST_Z - 0.034, WAIST_Z + 0.038, 37)
+        out = []
+        for z in zs:
+            r = outermost(bvhs, Vector((center[0], center[1], z)), d)
+            k = max(-1.0, min(1.0, (z - BELT_Z) / (BELT_W / 2)))
+            over = b + t * k + 0.0028 + 0.0025               # clear of the belt (+ face angle), thickness
+            if lo <= z <= hi:
+                out.append(over)
+            else:                                             # tuck back down to the surface
+                f = min(1.0, (lo - z) / 0.010 if z < lo else (z - hi) / 0.010)
+                out.append(over + (r + 0.0006 - over) * smooth01(f))
+        samples = [(Vector((center[0], center[1], z)) + d * r, d) for z, r in zip(zs, out)]
+        loop, _ = surface_ribbon(samples, 0.016, 0.0, f"BeltLoop_{deg}", STRAP, thickness=0.0025)
         pieces.append(loop)
     return pieces
 
