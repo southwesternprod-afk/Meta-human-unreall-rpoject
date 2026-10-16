@@ -165,10 +165,11 @@ def soften_leather(body, bm):
         # (starting above the belt line: a worn belt pins the leather flat under it)
         band = smooth01((0.19 - zr) / 0.12) * smooth01((zr - 0.030) / 0.02)
         if band > 0:
-            cluster = smooth01((mnoise.noise(p * 7.0 + Vector((5, 2, 0))) + 0.15) / 0.5)
+            # spread evenly round the waist (a tight cluster reads as a crumpled patch)
+            cluster = smooth01((mnoise.noise(p * 5.0 + Vector((5, 2, 0))) + 0.55) / 0.8)
             taut = 0.35 if (p.y < 0 and abs(p.x) < 0.08) else 1.0
             wave = math.sin(2 * math.pi * (zr + 0.010 * mnoise.noise(p * 14.0)) / 0.034)
-            d += 0.0050 * band * cluster * taut * wave
+            d += 0.0034 * band * cluster * taut * wave
         # folds fanning down and inwards from each armpit
         for a in armpits:
             dz = p.z - a.z

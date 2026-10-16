@@ -282,7 +282,7 @@ class Context:
 
 # --- material assembly ----------------------------------------------------------
 # Linear luminance limits matching validate.py: non-metal sRGB 30..240, metal >= ~175.
-SAFE_DIELECTRIC = (0.0135, 0.85)
+SAFE_DIELECTRIC = (0.0155, 0.85)
 SAFE_METAL_MIN = 0.47
 
 
