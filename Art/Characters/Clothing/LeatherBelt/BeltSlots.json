@@ -1,0 +1,96 @@
+{
+  "units": "metres, Blender world space (Z up, character faces -Y); Unreal: x100 cm, Y flipped",
+  "skeleton": "MetaHuman body (same as SKM_John_doe_BodyMesh)",
+  "slots": {
+    "PouchR": {
+      "degrees_from_front": -45.0,
+      "hook_m": [
+        -0.1322,
+        -0.1667,
+        0.895
+      ],
+      "outward": [
+        -0.7071,
+        -0.7071,
+        0.0
+      ],
+      "along_belt": [
+        0.7071,
+        -0.7071,
+        0.0
+      ]
+    },
+    "PouchL": {
+      "degrees_from_front": 45.0,
+      "hook_m": [
+        0.1345,
+        -0.1648,
+        0.895
+      ],
+      "outward": [
+        0.7071,
+        -0.7071,
+        0.0
+      ],
+      "along_belt": [
+        0.7071,
+        0.7071,
+        -0.0
+      ]
+    },
+    "SheathR": {
+      "degrees_from_front": -95.0,
+      "hook_m": [
+        -0.2061,
+        -0.0142,
+        0.895
+      ],
+      "outward": [
+        -0.9962,
+        0.0872,
+        0.0
+      ],
+      "along_belt": [
+        -0.0872,
+        -0.9962,
+        0.0
+      ]
+    },
+    "SheathL": {
+      "degrees_from_front": 95.0,
+      "hook_m": [
+        0.2074,
+        -0.0144,
+        0.895
+      ],
+      "outward": [
+        0.9962,
+        0.0872,
+        0.0
+      ],
+      "along_belt": [
+        -0.0872,
+        0.9962,
+        0.0
+      ]
+    },
+    "Back": {
+      "degrees_from_front": 180.0,
+      "hook_m": [
+        0.0021,
+        0.1356,
+        0.895
+      ],
+      "outward": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "along_belt": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    }
+  }
+}
