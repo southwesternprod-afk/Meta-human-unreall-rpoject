@@ -48,7 +48,8 @@ def _load(path, max_side=1024):
     img = Image.open(path).convert("RGB")
     full = img.size
     if max(img.size) > max_side:                      # statistics don't need every pixel
-        img = img.resize((max_side, max_side * img.size[1] // img.size[0]), Image.BILINEAR)
+        # nearest-neighbour keeps values pure (bilinear would invent grey metallic)
+        img = img.resize((max_side, max_side * img.size[1] // img.size[0]), Image.NEAREST)
     return np.asarray(img, dtype=np.float32) / 255.0, full
 
 

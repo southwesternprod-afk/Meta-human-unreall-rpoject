@@ -1005,9 +1005,9 @@ def pieces_to_object(pieces, name):
 # Built from the aaa-materials presets (plugins/aaa-materials) plus the jerkin's own
 # construction details. Leather dyes are sRGB picks matched to the reference.
 CREST = OUT_DIR / "Source" / "T_LeatherJerkin_CrestMask.png"
-LEATHER_MAIN = "#563828"     # jerkin body, skirt, collar
-LEATHER_STRAP = "#432c1e"    # straps, waist band, placket closures
-LEATHER_BRACER = "#5e4130"   # bracers
+LEATHER_MAIN = "#4f3b2c"     # jerkin body, skirt, collar
+LEATHER_STRAP = "#3e2d21"    # straps, waist band, placket closures
+LEATHER_BRACER = "#564231"   # bracers
 WOOL = "#4a4632"             # gambeson sleeves
 STITCH = "#7d6a52"           # waxed linen thread
 
@@ -1065,9 +1065,10 @@ def jerkin_layers(c):
         height = g.sub(height, g.add(g.mul(seam, 1.5), g.mul(near(ed, 0.0012, 0.0012), 0.8)))
         return aaa.engine.Surface(base, rough, s.metal, height, s.bump)
 
-    main = tailor(L.leather(c, color=LEATHER_MAIN, wear=0.55, dirt=0.55), LEATHER_MAIN, True)
-    strap = tailor(L.leather(c, color=LEATHER_STRAP, wear=0.6, dirt=0.5, scale=1.15), LEATHER_STRAP, False)
-    bracer = tailor(L.leather(c, color=LEATHER_BRACER, wear=0.65, dirt=0.5), LEATHER_BRACER, False)
+    main = tailor(L.leather(c, color=LEATHER_MAIN, wear=0.55, dirt=0.55, grain_amount=0.4), LEATHER_MAIN, True)
+    strap = tailor(L.leather(c, color=LEATHER_STRAP, wear=0.6, dirt=0.5, grain_amount=0.35, scale=1.15),
+                   LEATHER_STRAP, False)
+    bracer = tailor(L.leather(c, color=LEATHER_BRACER, wear=0.65, dirt=0.5, grain_amount=0.4), LEATHER_BRACER, False)
 
     # ---- blackened steel: pauldrons, buckles, rivets ----------------------------------------
     # Plates are only 2 mm thick, so the AO-based edge mask would flag them everywhere;
@@ -1092,7 +1093,7 @@ def jerkin_layers(c):
 
     # ---- quilted wool gambeson and riveted mail (2D pattern coords from the build) ---------
     cloth = L.wool(c, color=WOOL, quilted=True, channel=0.026, channel_axis="X", P2=pc_vec, wear=0.4, dirt=0.55)
-    mail = L.chainmail(c, ring=0.0085, rust=0.45, dirt=0.55, P2=pc_vec)
+    mail = L.chainmail(c, ring=0.0085, rust=0.45, dirt=0.55, oxide=0.7, P2=pc_vec)
 
     return [(None, main), (is_strap, strap), (is_bracer, bracer),
             (c.is_value(part, STEEL), steel), (c.is_value(part, CLOTH), cloth), (c.is_value(part, MAIL), mail)]

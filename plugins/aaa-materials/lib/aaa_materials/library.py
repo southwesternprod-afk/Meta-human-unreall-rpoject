@@ -42,10 +42,11 @@ def _P2(c, P2, uv_size):
 
 
 def _snap(period, c, P2, uv_size):
-    """For tileable bakes (UV-driven coords) fit a whole number of repeats in the tile."""
+    """For tileable bakes (UV-driven coords) fit an even number of repeats in the
+    tile, so the half-tile offset used to make it seamless lands in phase."""
     if P2 is not None or not c.tileable:
         return period
-    return uv_size / max(1, round(uv_size / period))
+    return uv_size / max(2, 2 * round(uv_size / period / 2))
 
 
 def _shade(color, k):
@@ -55,9 +56,10 @@ def _shade(color, k):
 
 # --- leather ---------------------------------------------------------------------------
 @preset
-def leather(c, color="#4a2f1f", wear=0.5, dirt=0.5, scale=1.0, P=None, P2=None, uv_size=1.0):
+def leather(c, color="#4a2f1f", wear=0.5, dirt=0.5, grain_amount=1.0, scale=1.0, P=None, P2=None, uv_size=1.0):
     """Vegetable-tanned leather: pebbled grain, mottled dye, creases, scuffs,
-    burnished worn areas and dark grime in the creases."""
+    burnished worn areas and dark grime in the creases. Lower `grain_amount`
+    (0.3-0.5) for large garments where one texture covers a lot of surface."""
     g = c.g
     P = _P(c, P)
     base_col = srgb(color)
@@ -65,7 +67,8 @@ def leather(c, color="#4a2f1f", wear=0.5, dirt=0.5, scale=1.0, P=None, P2=None, 
     cells = g.voronoi(g.mapping(P, (1, 1, 1), loc=(0.37, 0.11, 0.83)), 520.0 * scale, "DISTANCE_TO_EDGE")
     pebble = g.smooth(cells, 0.0, 0.16)
     pores = g.remap(g.noise(P, 1800.0 * scale, 2.0), 0.35, 0.65)
-    grain = g.clamp01(g.add(g.mul(pebble, 0.8), g.mul(pores, 0.25)))
+    grain = g.mul(g.clamp01(g.add(g.mul(pebble, 0.8), g.mul(pores, 0.25))), grain_amount)
+    pebble = g.mul(pebble, grain_amount)
     mottle = g.remap(g.noise(P, 9.0 * scale, 4.0), 0.30, 0.72)
     crease = w.creases(c, 0.5, P)
     scuff = g.mul(g.remap(g.noise(P, 22.0 * scale, 6.0, 0.7), 0.56, 0.72), g.inv(c.cavity))
@@ -85,7 +88,7 @@ def leather(c, color="#4a2f1f", wear=0.5, dirt=0.5, scale=1.0, P=None, P2=None, 
     base = g.mix_color(base, _shade(base_col, 0.30), g.mul(grime, 0.9))
     base = g.mix_color(base, srgb("#8a7d6b"), g.mul(dust, 0.4))
 
-    rough = g.add(0.72, g.mul(pebble, -0.20))           # valleys rough, pebble tops satin
+    rough = g.add(0.62 + 0.10 * grain_amount, g.mul(pebble, -0.20))   # valleys rough, pebble tops satin
     rough = g.mix_float(rough, 0.42, g.mul(stain, 0.6))
     rough = g.mix_float(rough, 0.36, g.mul(worn, 0.8))
     rough = g.mix_float(rough, 0.78, g.mul(scuff, wear))
@@ -162,7 +165,7 @@ def steel_blackened(c, wear=0.5, dirt=0.4, rust=0.25, scale=1.0, P=None, P2=None
     rough = g.mix_float(rough, 0.86, rustm)
     rough = g.mix_float(rough, 0.72, grime)
     # the oxide skin is a dark dielectric; only the worn-through steel is metal
-    metal = bare
+    metal = g.smooth(bare, 0.35, 0.65)
     metal = g.mul(metal, g.sub(1.0, g.clamp01(g.add(rustm, g.mul(grime, 0.7)))))
     forge = g.remap(g.noise(P, 320.0 * scale, 3.0, 0.6), 0.3, 0.7)      # fine forging texture
     height = g.sub(g.add(g.mul(dents, 0.5), g.mul(forge, 0.12)), g.mul(rustm, 0.2))
@@ -218,9 +221,10 @@ def precious_metal(c, kind="brass", wear=0.5, dirt=0.4, patina=0.4, scale=1.0, P
 
 
 @preset
-def chainmail(c, ring=0.0085, rust=0.4, dirt=0.5, P=None, P2=None, uv_size=1.0):
+def chainmail(c, ring=0.0085, rust=0.4, dirt=0.5, oxide=0.6, P=None, P2=None, uv_size=1.0):
     """Riveted mail: interlocking rings on a diagonal grid (2D pattern coords),
-    dark gaps, per-ring variation, rust and grime between the rings."""
+    dark gaps, per-ring variation, rust and grime between the rings. `oxide`
+    0..1 blackens the wire sides (oiled / blued mail) leaving bright crests."""
     g = c.g
     P = _P(c, P)
     p2 = _P2(c, P2, uv_size)
@@ -238,11 +242,14 @@ def chainmail(c, ring=0.0085, rust=0.4, dirt=0.5, P=None, P2=None, uv_size=1.0):
     grime = g.mul(g.inv(rings), dirt)
     metal_col = g.mix_color(srgb("#b4b6b9"), srgb("#d0d2d5"), var)
     solid = g.smooth(rings, 0.25, 0.45)
-    base = g.mix_color(srgb("#262422"), metal_col, solid)
+    crest = g.smooth(rings, 0.55 + 0.35 * oxide, 0.75 + 0.2 * oxide)      # bare wire tops
+    ox_col = g.mix_color(srgb("#2e2f31"), srgb("#45464a"), var)
+    base = g.mix_color(srgb("#262422"), g.mix_color(ox_col, metal_col, crest), solid)
     base = g.mix_color(base, srgb("#5e2c12"), g.clamp01(rustm))
     base = g.mix_color(base, srgb("#262220"), g.mul(grime, 0.6))
-    rough = g.mix_float(g.mix_float(0.85, 0.36, solid), 0.88, g.clamp01(rustm))
-    metal = g.mul(solid, g.math("LESS_THAN", g.add(rustm, g.mul(grime, 1.2)), 0.35))
+    rough = g.mix_float(g.mix_float(0.85, g.mix_float(0.5, 0.34, crest), solid), 0.88, g.clamp01(rustm))
+    metal = g.mul(g.math("GREATER_THAN", g.mul(solid, crest), 0.5),
+                  g.math("LESS_THAN", g.add(rustm, g.mul(grime, 1.2)), 0.35))
     return Surface(base, rough, metal, rings, 0.0012)
 
 
