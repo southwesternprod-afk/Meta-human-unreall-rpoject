@@ -7,7 +7,8 @@ the jerkin). It is fitted over the jerkin's waist welt and passes under its belt
 loops. Pieces (one mesh, one texture set):
   - 36 mm belt (3.2 mm leather) with stitched, burnished edges, cinched onto the jerkin
   - forged buckle with a leather chape, the tongue through a keeper, its end
-    tucked under the belt and hanging down the front with an iron strap end
+    tied over the belt (medieval knot) and hanging down the front, weighted by a
+    forged strap end with an engraved border and a knop
   - five leather frogs with iron D-rings: the attachment slots for the separate
     pouches and sheaths (positions written to BeltSlots.json)
 """
@@ -35,13 +36,20 @@ ASSET_NAME = "SKM_LeatherBelt"
 TEX = "LeatherBelt"
 
 TONGUE = 3.0              # tone id: the punched tongue
+STRAP_END = 4.0           # tone id: the iron strap end (engraved)
 BUCKLE_DEG = -12.0        # around from the centre front (+ = character's left)
 KEEPER_DEG = -1.0
-TAIL_DEG = 9.0            # where the tucked end hangs down
-TAIL_LEN = 0.11
+TAIL_DEG = 9.0            # where the end loops over the belt and hangs down
+TAIL_LEN = 0.11           # how far it hangs below the belt, strap end included
+TONGUE_LIFT, TONGUE_T = 0.0029, 0.0026
+TAIL_T = 0.0028
+END_W = BELT_W * 0.9 + 0.0024     # strap end: a forged sheath over the leather tip
+END_LEN = 0.036                   # straight part + ogee taper (the knop hangs below)
+END_T = TAIL_T + 0.002            # a 1 mm plate either side of the leather
 # attachment slots for the separate pouches / sheaths (degrees from the centre front)
 SLOTS = {"PouchR": -45.0, "PouchL": 45.0, "SheathR": -95.0, "SheathL": 95.0, "Back": 180.0}
 LEATHER_BELT = "#3a2a1f"
+BELT_C = (0.0, 0.0)       # belt axis (x, y), set by build_all; the fittings' wear faces away from it
 STITCH = "#7d6a52"
 
 
@@ -136,29 +144,106 @@ def build_buckle_set(frame, bvhs_under, c):
     for k in (-0.5, 0.5):
         q = frame.point(BUCKLE_DEG - 9.5, k, 0.0027)
         pieces.append(bj.rivet(q, frame.normal(BUCKLE_DEG - 9.5), r=0.0029))
-    # tongue: through the buckle, under the keeper, over the belt
-    tongue, _ = band_ribbon(frame, BUCKLE_DEG, TAIL_DEG + 1.5, 0.0029, BELT_W * 0.9, "Tongue", TONGUE, 0.0026,
-                            steps=24, tips=(0.0, 0.008))
+    # tongue: through the buckle and the keeper; its end runs on under the loop below
+    tongue, _ = band_ribbon(frame, BUCKLE_DEG, TAIL_DEG + 2.5, TONGUE_LIFT, BELT_W * 0.9, "Tongue", TONGUE,
+                            TONGUE_T, steps=24)
     pieces.append(tongue)
     pieces.append(bj.keeper(frame.point(KEEPER_DEG, 0.0, 0.0002), frame.normal(KEEPER_DEG),
                             frame.tangent(KEEPER_DEG), BELT_W, 0.0050, "BeltKeeper"))
-    # the end, tucked under the belt and hanging down the front over the skirt
-    d = frame.dirn(TAIL_DEG)
+    return pieces + build_tail(frame, bvhs_under, c)
+
+
+def build_tail(frame, bvhs_under, c):
+    """The end after the keeper, tied the medieval way: tucked behind the belt,
+    brought up over its top edge and down the front over the tongue, then hanging
+    free over the skirt, weighted by a forged strap end. One continuous strap."""
+    d, nrm, side = frame.dirn(TAIL_DEG), frame.normal(TAIL_DEG), frame.tangent(TAIL_DEG)
+    up = (frame.point(TAIL_DEG, 1.0) - frame.point(TAIL_DEG, -1.0)).normalized()
+    stack = TONGUE_LIFT + 0.0004 + 0.0006           # the tongue (+ its crown) and a little air
+    lift = stack + TAIL_T                           # the end's outer face over the belt
+    l0 = (stack - BELT_T) / 2                       # middle of the belt + tongue stack
+    centre = frame.point(TAIL_DEG, 1.0) + nrm * l0
     samples = []
-    for z in np.arange(BELT_Z - BELT_W / 2 + 0.012, BELT_Z - BELT_W / 2 - TAIL_LEN, -0.008):
-        o = Vector((c[0], c[1], z))
-        r = outermost(bvhs_under, o, d)
-        samples.append((o + d * (r + 0.0014 + 0.0028), d))     # outer face; 2.8 mm leather under it
-    tail, tail_c = bj.surface_ribbon(samples, BELT_W * 0.9, 0.0, "BeltTail", STRAP, thickness=0.0028,
-                                     tips=(0.0, 0.0))
-    pieces.append(tail)
-    # iron strap end on the tip, riveted
-    tip = samples[-5:]
-    end, _ = bj.surface_ribbon([(loc + n * 0.0007, n) for loc, n in tip], BELT_W * 0.9 + 0.0025, 0.0, "StrapEnd",
-                               STRAP, thickness=0.0012, tips=(0.0, 0.011))
-    end.part, end.rigid = STEEL, True
+    for phi in np.linspace(math.radians(112), 0.0, 10, endpoint=False):   # over the top edge
+        nn = nrm * math.cos(phi) + up * math.sin(phi)
+        samples.append((centre + nn * (lift - l0), nn))
+    for k in np.linspace(1.0, -1.0, 9):                                     # down the front
+        samples.append((frame.point(TAIL_DEG, k) + nrm * lift, nrm))
+    # below the belt it hangs plumb from the lower edge, resting on the skirt only
+    # where the skirt flares out further (a drape: the convex hull of both)
+    bottom = samples[-1][0]
+    z_end = bottom.z - TAIL_LEN
+    z_sheath = z_end + 0.0052 + END_LEN             # top of the strap end (knop below END_LEN)
+    zs = np.arange(bottom.z - 0.003, z_end + 0.0052 - 1e-6, -0.003)
+    r0 = (bottom - Vector((c[0], c[1], bottom.z))).dot(d)
+    rs = np.array([max(r0, outermost(bvhs_under, Vector((c[0], c[1], z)), d)
+                       + (0.0012 if z > z_sheath + 0.002 else 0.0022) + TAIL_T) for z in zs])
+    for _ in range(30):
+        rs[1:-1] = np.maximum(rs[1:-1], (rs[:-2] + rs[2:]) / 2)
+    hang = [Vector((c[0], c[1], z)) + d * r for z, r in zip(zs, rs)]
+
+    def hang_normal(i):
+        t = hang[min(i + 1, len(hang) - 1)] - hang[max(i - 1, 0)]
+        n = t.cross(side).normalized()
+        return n if n.dot(d) > 0 else -n
+
+    leather_end = z_sheath - 0.008                  # the leather runs 8 mm into the strap end
+    samples += [(p, hang_normal(i)) for i, p in enumerate(hang) if p.z >= leather_end]
+    tail, _ = bj.surface_ribbon(samples, BELT_W * 0.9, 0.0, "BeltEnd", STRAP, thickness=TAIL_T)
+    pieces = [tail]
+
+    # forged strap end: a sheath with an ogee point and a knop, two rivets and an
+    # engraved border (see belt_layers)
+    i_top = min(range(len(hang)), key=lambda i: abs(hang[i].z - z_sheath))
+    i_bot = min(range(len(hang)), key=lambda i: abs(hang[i].z - (z_sheath - END_LEN)))
+    down = (hang[i_bot] - hang[i_top]).normalized()
+    n_s = down.cross(side).normalized()
+    n_s = n_s if n_s.dot(d) > 0 else -n_s
+    across = down.cross(n_s).normalized()            # (across, down, n_s) is right-handed
+    origin = hang[i_top] + n_s * 0.001
+
+    def half_width(v):
+        return END_W / 2 + (0.0026 - END_W / 2) * bj.smooth01((v - 0.020) / 0.016)
+
+    # clear the skirt with the back plate
+    push = 0.0
+    for v in np.linspace(0.0, END_LEN, 7):
+        for k in (-1.0, 0.0, 1.0):
+            q = origin + down * v + across * (k * half_width(v)) - n_s * END_T
+            dq = Vector((q.x - c[0], q.y - c[1], 0.0))
+            rq = dq.length
+            dq.normalize()
+            need = outermost(bvhs_under, Vector((c[0], c[1], q.z)), dq) + 0.0008
+            push = max(push, (need - rq) / max(dq.dot(n_s), 0.5))
+    origin = origin + n_s * push
+    rows, uv = [], []
+    for v in np.linspace(0.0, END_LEN, 19):
+        hw = half_width(v)
+        rows.append([origin + down * v + across * (k * hw) + n_s * (0.0005 * (1 - k * k))
+                     for k in np.linspace(-1.0, 1.0, 9)])
+        uv.append([(v, k * hw) for k in np.linspace(-1.0, 1.0, 9)])
+    bm, vr = bj.loft_grid(rows, closed=False)
+    bm.normal_update()
+    bm.faces.ensure_lookup_table()
+    if bm.faces[0].normal.dot(n_s) < 0:
+        bmesh.ops.reverse_faces(bm, faces=bm.faces)
+    end = Piece("StrapEnd", bm, STEEL, STRAP_END, thickness=END_T, rigid=True)
+    for row, uvrow in zip(vr, uv):
+        for vert, p in zip(row, uvrow):
+            end.pc[vert] = p
     pieces.append(end)
-    pieces.append(bj.rivet(tip[1][0] + tip[1][1] * 0.0008, tip[1][1], r=0.0026))
+    knop = bmesh.new()
+    bmesh.ops.create_uvsphere(knop, u_segments=12, v_segments=8, radius=1.0)
+    kc = origin - n_s * (END_T / 2) + down * (END_LEN + 0.0016)
+    for vert in knop.verts:
+        x, y, z = vert.co
+        vert.co = kc + across * (x * 0.0034) + down * (y * 0.0036) + n_s * (z * 0.0030)
+    knop.normal_update()
+    if sum((f.calc_center_median() - kc).dot(f.normal) for f in knop.faces) < 0:
+        bmesh.ops.reverse_faces(knop, faces=knop.faces)
+    pieces.append(Piece("StrapEndKnop", knop, STEEL, STRAP_END, rigid=True))
+    for u in (-0.0085, 0.0085):
+        pieces.append(bj.rivet(origin + down * 0.0065 + across * u + n_s * 0.0003, n_s, r=0.0021))
     return pieces
 
 
@@ -220,6 +305,8 @@ def build_all(body):
     welt = bj.build_waist_band(torso, skirt.bm)
     game_torso = bj.build_torso(body, high=False)     # ...but the belt sits on the game mesh
     c = np.mean([v.co[:2] for v in torso.verts if abs(v.co.z - WAIST_Z) < 0.02], axis=0)
+    global BELT_C
+    BELT_C = (float(c[0]), float(c[1]))
     placket = bj.build_front_details(torso)[0]        # the centre placket runs down under the belt
     under = [BVHTree.FromBMesh(b) for b in (game_torso, skirt.bm, welt.bm, placket.bm)]
     band, frame = build_band(under, c)
@@ -264,11 +351,24 @@ def belt_layers(c):
     height = g.sub(g.add(s.height, g.mul(stitch, 0.7)), g.add(g.mul(holes, 3.0), g.mul(near(ed, 0.0012, 0.0012), 0.8)))
     leather = aaa.engine.Surface(base, rough, 0.0, height, s.bump)
 
-    # fittings: worn wire edges from the AO edge, plate rims from the distance to the rim
+    # fittings wear where the leather and the hands rub them: the outward crown of
+    # the wire (buckle frame, prong, D-rings, knop) and a thin line round plate rims;
+    # everywhere else keeps its black oxide
+    xyz = g.xyz(c.P)
+    radial = g.node("ShaderNodeCombineXYZ", {"X": g.sub(xyz["X"], BELT_C[0]), "Y": g.sub(xyz["Y"], BELT_C[1]),
+                                             "Z": 0.0}).outputs[0]
+    radial = g.node("ShaderNodeVectorMath", {0: radial}, operation="NORMALIZE").outputs["Vector"]
+    facing = g.node("ShaderNodeVectorMath", {0: c.N, 1: radial}, operation="DOT_PRODUCT").outputs["Value"]
+    crown = g.mul(g.remap(facing, 0.6, 0.95), g.add(0.55, g.mul(aaa.weathering.breakup(c, 30.0, 0.35, 0.65), 0.45)))
     has_rim = g.math("LESS_THAN", ed, 0.049)          # plates (strap end) have rims; wire does not
-    edge = g.mix_float(g.mul(c.edge, 0.6), g.mul(g.remap(ed, 0.0, 0.003, 1.0, 0.0),
-                                                aaa.weathering.breakup(c, 40.0, 0.35, 0.6)), has_rim)
-    iron = L.steel_blackened(c.with_masks(edge=edge), wear=0.55, dirt=0.45, rust=0.3)
+    rim = g.mul(g.remap(ed, 0.0, 0.0016, 1.0, 0.0), g.add(0.7, g.mul(aaa.weathering.breakup(c, 40.0, 0.35, 0.6), 0.3)))
+    edge = g.mix_float(g.maxf(crown, g.mul(c.edge, 0.25)), g.maxf(rim, g.mul(crown, 0.5)), has_rim)
+    iron = L.steel_blackened(c.with_masks(edge=edge), wear=0.5, dirt=0.45, rust=0.3, rub=0.0)
+    # strap end: an engraved border and a cross line, black with packed grime
+    is_end = c.is_value(tone, STRAP_END)
+    engrave = g.mul(is_end, g.maxf(near(ed, 0.0024, 0.0005), near(pc["X"], 0.0125, 0.0006)))
+    iron = aaa.engine.Surface(g.mix_color(iron.base, srgb("#1c1b1a"), engrave), g.mix_float(iron.rough, 0.7, engrave),
+                              g.mul(iron.metal, g.inv(engrave)), g.sub(iron.height, g.mul(engrave, 0.9)), iron.bump)
     return [(None, leather), (c.is_value(part, STEEL), iron)]
 
 

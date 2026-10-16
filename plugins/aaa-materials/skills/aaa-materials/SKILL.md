@@ -53,14 +53,20 @@ engine.assign_baked_material(obj, out_dir, "MyAsset")
 ```
 - **High-to-low (the AAA default for anything with sculpted/subdivided detail):** build a
   detailed bake source and a lighter game mesh, unwrap both, then
-  `engine.bake(high, out_dir, name, layers, low=game_mesh, cage=0.004, ray=0.008)`. The
-  material and every fold/bevel of `high` land in the game mesh's normal map. Keep the
-  game mesh within ~2 mm of the source (measure it) and set `cage` a little above that.
+  `engine.bake(high, out_dir, name, layers, low=game_mesh, ray=0.008)`. The material and
+  every fold/bevel of `high` land in the game mesh's normal map. Leave `cage="auto"`: it
+  pushes the game mesh out only as far as the source sticks out, measured across every
+  triangle (folds that peak between game-mesh vertices would otherwise poke through the
+  cage and bake garbage). Keep the game mesh within a few mm of the source (measure it),
+  and after the bake render the normal map alone on a grey material and look for ragged
+  patches - they mean rays started inside the source.
 - `mask_scale` (bake arg) scales the edge/cavity/AO probe distances: 1.0 for props and
   clothing, 3-10 for buildings. `ao_distance` overrides the AO reach (0.02-0.03 for
   layered clothing so hidden inner layers don't go black).
 - Thin plates (< 3 mm): the baked edge mask flags them everywhere - give the preset an edge
   mask from a distance-to-rim attribute: `L.steel_blackened(c.with_masks(edge=my_edge))`.
+  Small fittings (buckles, rings, rivets): wear only where things rub - the outward crown of
+  the wire and a thin rim line - and pass `rub=0` so they get no broad polished patches.
 - Asset bakes are edge-padded automatically; for sets from elsewhere run
   `python3 ROOT/scripts/aaa.py pad <texdir>` (unpadded black space bleeds dark seams in mips).
 - Weave/ring/quilt presets need 2D surface coords in metres: pass `P2` (a vector attribute)

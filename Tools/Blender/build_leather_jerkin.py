@@ -1059,27 +1059,36 @@ def build_belt_loops(bvhs, center):
         th = math.radians(deg) % (2 * math.pi)
         cols = [float(np.interp(th, np.append(angles, 2 * math.pi), np.append(radius[:, c], radius[0, c])))
                 for c in range(len(BELT_KS))]
-        zs = np.linspace(BELT_Z - BELT_W / 2 - 0.019, BELT_Z + BELT_W / 2 + 0.019, 39)   # + flat sewn ends
-        out = []
-        for z in zs:
-            r = outermost(bvhs, Vector((center[0], center[1], z)), d)
-            k = max(-1.0, min(1.0, (z - BELT_Z) / (BELT_W / 2)))
-            over = float(np.interp(k, BELT_KS, cols)) + 0.0026 + 0.0025   # lies on the belt; thickness
-            if lo <= z <= hi:
-                out.append(over)
-            else:                                             # tuck back down to the surface
-                f = min(1.0, (lo - z) / 0.012 if z < lo else (z - hi) / 0.012)
-                out.append(over + (r + 0.0006 - over) * smooth01(f))
-        # face the loop along the belt's own surface (the body is oval: not square to `d`)
+        # lie across the belt's own surface (the body is oval: not square to `d`)
         def belt_pt(dd):
             aa = FRONT + math.radians(dd)
             rr = float(np.interp(math.radians(dd) % (2 * math.pi), np.append(angles, 2 * math.pi),
                                  np.append(radius[:, 2], radius[0, 2])))
             return Vector((math.cos(aa), math.sin(aa), 0)) * rr
-        along = belt_pt(deg + 1.0) - belt_pt(deg - 1.0)
-        n = Vector((0, 0, 1)).cross(along).normalized()
-        n = n if n.dot(d) > 0 else -n
-        samples = [(Vector((center[0], center[1], z)) + d * r, n) for z, r in zip(zs, out)]
+        side = (belt_pt(deg + 1.0) - belt_pt(deg - 1.0)).normalized()
+        zs = np.linspace(BELT_Z - BELT_W / 2 - 0.017, BELT_Z + BELT_W / 2 + 0.017, 43)   # + flat sewn ends
+        # the surface under the full width; a stiff strap bridges the small folds,
+        # so the sewn ends follow a smooth envelope of it (dilate, then average)
+        surf = np.array([max(outermost(bvhs, Vector((center[0], center[1], z)) + side * o, d)
+                             for o in (-0.0055, 0.0, 0.0055)) for z in zs])
+        env = np.array([surf[max(0, i - 3):i + 4].max() for i in range(len(surf))])
+        env = np.convolve(np.pad(env, 3, mode="edge"), np.ones(7) / 7, mode="valid")
+        out = []
+        for z, r in zip(zs, env):
+            k = max(-1.0, min(1.0, (z - BELT_Z) / (BELT_W / 2)))
+            over = float(np.interp(k, BELT_KS, cols)) + 0.0015 + 0.0025   # snug on the belt; thickness
+            if lo <= z <= hi:
+                out.append(over)
+            else:                                             # turn tightly round the belt's edge, sewn flat
+                f = min(1.0, (lo - z) / 0.007 if z < lo else (z - hi) / 0.007)
+                out.append(over + (r + 0.0006 - over) * smooth01(f))
+        pts = [Vector((center[0], center[1], z)) + d * r for z, r in zip(zs, out)]
+
+        def normal(i):                                        # square to the strap's own path
+            t = pts[min(i + 2, len(pts) - 1)] - pts[max(i - 2, 0)]
+            m = t.cross(side).normalized()
+            return m if m.dot(d) > 0 else -m
+        samples = [(p, normal(i)) for i, p in enumerate(pts)]
         loop, _ = surface_ribbon(samples, 0.013, 0.0, f"BeltLoop_{deg}", STRAP, thickness=0.0025)
         pieces.append(loop)
     return pieces

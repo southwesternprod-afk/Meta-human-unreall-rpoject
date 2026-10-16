@@ -9,13 +9,15 @@ its four belt loops (both use the same belt shape, so they always fit together).
   cinched onto the jerkin (follows its taper as a shallow cone, edges conform), checked
   for clipping and for gaps (gap under the belt: ~2 mm typical, ~3 mm at the edges)
 - forged buckle with a riveted leather chape; punched tongue through a keeper; the end
-  tucked under the belt and hanging down the front with an iron strap end
+  tied the medieval way (tucked behind the belt, brought over the top edge and down the
+  front) and hanging free, weighted by a forged strap end with an engraved border and a knop
+- fittings are blackened iron, polished only where the leather rubs them
 - five leather frogs with iron D-rings: the **attachment slots** for the separate pouches
   and sheaths
 
 | | |
 |---|---|
-| Mesh | ~9k tris, skinned to the MetaHuman body skeleton (buckle, rings and strap end rigid) |
+| Mesh | ~12k tris, skinned to the MetaHuman body skeleton (buckle, rings and strap end rigid) |
 | Material | `M_LeatherBelt` (single texture set) |
 | Textures (2048²) | `T_LeatherBelt_BaseColor`, `T_LeatherBelt_Normal` (DirectX), `T_LeatherBelt_ORM` |
 

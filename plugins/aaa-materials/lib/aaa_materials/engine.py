@@ -345,11 +345,45 @@ def new_bake_material(obj, name, res, tileable=False, mask_scale=1.0, ao_distanc
     return g, out, Context(g, name, res, tileable, mask_scale, ao_distance)
 
 
+# barycentric sample points per low triangle: edge midpoints, centre and three
+# inner points (the corners are sampled once per vertex)
+_CAGE_SAMPLES = np.array([(0.5, 0.5, 0.0), (0.0, 0.5, 0.5), (0.5, 0.0, 0.5), (1 / 3, 1 / 3, 1 / 3),
+                          (2 / 3, 1 / 6, 1 / 6), (1 / 6, 2 / 3, 1 / 6), (1 / 6, 1 / 6, 2 / 3)])
+
+
+def surface_offset(bvh, p, n, limit):
+    """Signed distance along `n` from `p` to the high surface that belongs to this
+    spot: the outward-facing surface nearest to `p` on the line p ± n·limit.
+    Undersides (straps, the inner wall of a thick shell) are skipped. None if no
+    such surface is in reach."""
+    from mathutils import Vector
+    d = Vector(-n)
+    start = Vector(p + n * limit)
+    travelled, best = 0.0, None
+    for _ in range(8):
+        hit = bvh.ray_cast(start, d, 2 * limit - travelled)
+        if hit[0] is None:
+            break
+        travelled += hit[3]
+        if hit[1].dot(n) > 0.0:
+            off = limit - travelled
+            if best is None or abs(off) < abs(best):
+                best = off
+            elif off < best:
+                break                               # moving away from p: done
+        start = hit[0] + d * 1e-5
+        travelled += 1e-5
+    return best
+
+
 def make_cage(low, high, margin=0.0008, limit=0.006):
-    """Per-vertex bake cage: the low mesh pushed out along its normals only as far
-    as the high mesh actually sticks out at that spot (+ `margin`). A uniform cage
-    would start rays inside nearby layers (straps, overlapping plates) and catch
-    their undersides; this one hugs the surface like a hand-tuned cage."""
+    """Bake cage: the low mesh pushed out along its normals only as far as the high
+    mesh actually sticks out there (+ `margin`). A uniform cage would start rays
+    inside nearby layers (straps, overlapping plates) and catch their undersides;
+    this one hugs the surface like a hand-tuned cage. The high mesh is measured
+    across every low triangle, not just at its corners: folds and bulges that
+    peak between low vertices would otherwise poke through the cage, start rays
+    inside the shell and bake garbage normals."""
     from mathutils.bvhtree import BVHTree
     deps = bpy.context.evaluated_depsgraph_get()
     bvh = BVHTree.FromObject(high, deps)
@@ -357,14 +391,36 @@ def make_cage(low, high, margin=0.0008, limit=0.006):
     cage = bpy.data.objects.new(low.name + "_Cage", me)
     bpy.context.scene.collection.objects.link(cage)
     cage.matrix_world = low.matrix_world.copy()
-    pushes = []
-    for v in me.vertices:
-        loc, _, _, _ = bvh.find_nearest(v.co)
-        out = (loc - v.co).dot(v.normal) if loc is not None else 0.0
-        pushes.append(min(limit, max(0.0, out) + margin))
-    for v, e in zip(me.vertices, pushes):
-        v.co = v.co + v.normal * e
-    print(f"[aaa] cage: push p50 {1000 * float(np.median(pushes)):.1f} mm, max {1000 * max(pushes):.1f} mm")
+    nv = len(me.vertices)
+    co = np.zeros(nv * 3)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    vn = np.zeros(nv * 3)
+    me.vertices.foreach_get("normal", vn)
+    vn = vn.reshape(-1, 3)
+    me.calc_loop_triangles()
+    tris = np.zeros(len(me.loop_triangles) * 3, dtype=np.int64)
+    me.loop_triangles.foreach_get("vertices", tris)
+    tris = tris.reshape(-1, 3)
+
+    def out(p, n):
+        off = surface_offset(bvh, p, n, limit)
+        return 0.0 if off is None else max(0.0, off)
+
+    need = np.array([out(co[i], vn[i]) for i in range(nv)])
+    tri_need = np.zeros(len(tris))
+    for b in _CAGE_SAMPLES:
+        P = (co[tris] * b[None, :, None]).sum(1)
+        N = (vn[tris] * b[None, :, None]).sum(1)
+        N /= np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-9)
+        tri_need = np.maximum(tri_need, [out(p, n) for p, n in zip(P, N)])
+    for k in range(3):
+        np.maximum.at(need, tris[:, k], tri_need)
+    pushes = np.minimum(limit, need + margin)
+    me.vertices.foreach_set("co", (co + vn * pushes[:, None]).ravel())
+    me.update()
+    print(f"[aaa] cage: push p50 {1000 * float(np.median(pushes)):.1f} mm, "
+          f"p99 {1000 * float(np.percentile(pushes, 99)):.1f} mm, max {1000 * float(pushes.max()):.1f} mm")
     return cage
 
 

@@ -142,15 +142,17 @@ def steel(c, finish="brushed", wear=0.5, dirt=0.4, rust=0.15, scale=1.0, directi
 
 
 @preset
-def steel_blackened(c, wear=0.5, dirt=0.4, rust=0.25, scale=1.0, P=None, P2=None, uv_size=1.0):
+def steel_blackened(c, wear=0.5, dirt=0.4, rust=0.25, scale=1.0, rub=None, P=None, P2=None, uv_size=1.0):
     """Blackened / oil-quenched armour steel: a dark oxide skin (non-metal) worn
     through to bright steel on the edges and high points, soft hammer dents,
-    rust and grime in the hollows."""
+    rust and grime in the hollows. `rub` sets the broad polished patches
+    (default wear * 0.6); use 0 for small fittings that only wear on the edge."""
     g = c.g
     P = _P(c, P)
     dents = g.remap(g.noise(P, 55.0 * scale, 2.0), 0.3, 0.7)
     tone = g.remap(g.noise(P, 30.0 * scale, 4.0), 0.4, 0.65)
-    rubbed = g.mul(g.remap(g.noise(P, 12.0 * scale, 4.0), 0.64, 0.76), wear * 0.6)   # broad polished patches
+    rub = wear * 0.6 if rub is None else rub
+    rubbed = g.mul(g.remap(g.noise(P, 12.0 * scale, 4.0), 0.64, 0.76), rub)          # broad polished patches
     bare = g.clamp01(g.add(w.edge_wear(c, wear, P), rubbed))
     rustm = g.mul(g.mul(g.remap(g.noise(P, 18.0 * scale, 5.0, 0.65), 0.6, 0.74),
                         g.add(g.mul(c.cavity, 0.8), 0.25)), rust * 2.0)
