@@ -64,6 +64,8 @@ class Piece:
         self.hide = {}        # vert -> hide/panel id offset (leather tone variation)
         self.hard = False     # small hard-surface part: sharp shading on crisp edges
         self.inner = set()    # faces on the inside of thickened pieces (lower texel density)
+        self.extra = {}       # attribute name -> {vert: value}: more per-vertex data for the texture
+        self.inner_keep = None  # big shells: keep the inside only this far in from the openings
 
 
 EDGE_CAP = 0.05
@@ -1177,7 +1179,7 @@ def thicken(piece):
                 continue
             if v in piece.pc:
                 piece.pc[w] = piece.pc[v]
-            for d in (piece.seamdist, piece.hide):
+            for d in (piece.seamdist, piece.hide, *piece.extra.values()):
                 if v in d:
                     d[w] = d[v]
             piece.edgedist[w] = 0.0 if w is mid.get(v) else piece.edgedist.get(v, EDGE_CAP)
@@ -1195,16 +1197,29 @@ def thicken(piece):
     bm.normal_update()
 
 
-def pieces_to_object(pieces, name):
+def trim_inner(piece):
+    """Drop the inside of a thick shell where nobody can see it: only a facing
+    `inner_keep` deep stays inside its openings (hems, waist)."""
+    gone = [f for f in piece.inner if all(piece.edgedist.get(v, EDGE_CAP) > piece.inner_keep for v in f.verts)]
+    bmesh.ops.delete(piece.bm, geom=gone, context="FACES")
+    piece.inner -= set(gone)
+
+
+def pieces_to_object(pieces, name, extra_defaults=None):
     """Merge pieces into one mesh object with part/tone/pc/rigid_id/edgedist/
-    seamdist/hide point attributes and an 'inner' face attribute."""
+    seamdist/hide point attributes, any `Piece.extra` attributes (pieces without
+    one get `extra_defaults[name]`, else 0) and an 'inner' face attribute."""
     bm = bmesh.new()
     part_l, tone_l, pc_l, rid_l, ed_l, seam_l, hide_l, inner_l = [], [], [], [], [], [], [], []
+    extra_defaults = extra_defaults or {}
+    extra_l = {k: [] for k in sorted({k for p in pieces for k in p.extra})}
     for pid, p in enumerate(pieces):
         src = p.bm
         p.edgedist = edge_distance(src)
         if p.thickness:
             thicken(p)
+            if p.inner_keep is not None:
+                trim_inner(p)
         mapping = {}
         for v in src.verts:
             mapping[v] = bm.verts.new(v.co)
@@ -1215,6 +1230,8 @@ def pieces_to_object(pieces, name):
             ed_l.append(p.edgedist.get(v, EDGE_CAP))
             seam_l.append(p.seamdist.get(v, EDGE_CAP))
             hide_l.append(pid + p.hide.get(v, 0.0))
+            for k, vals in extra_l.items():
+                vals.append(p.extra.get(k, {}).get(v, extra_defaults.get(k, 0.0)))
         for f in src.faces:
             try:
                 nf = bm.faces.new([mapping[v] for v in f.verts])
@@ -1235,6 +1252,8 @@ def pieces_to_object(pieces, name):
     ck.set_attr(obj, "seamdist", seam_l)
     ck.set_attr(obj, "hide", hide_l)
     ck.set_attr(obj, "inner", inner_l, domain="FACE")
+    for k, vals in extra_l.items():
+        ck.set_attr(obj, k, vals)
     return obj
 
 
