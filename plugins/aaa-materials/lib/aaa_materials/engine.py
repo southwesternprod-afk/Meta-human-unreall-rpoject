@@ -345,16 +345,57 @@ def new_bake_material(obj, name, res, tileable=False, mask_scale=1.0, ao_distanc
     return g, out, Context(g, name, res, tileable, mask_scale, ao_distance)
 
 
-def bake_pass(g, out, shader_node, target_img, bake_type, samples):
+def make_cage(low, high, margin=0.0008, limit=0.006):
+    """Per-vertex bake cage: the low mesh pushed out along its normals only as far
+    as the high mesh actually sticks out at that spot (+ `margin`). A uniform cage
+    would start rays inside nearby layers (straps, overlapping plates) and catch
+    their undersides; this one hugs the surface like a hand-tuned cage."""
+    from mathutils.bvhtree import BVHTree
+    deps = bpy.context.evaluated_depsgraph_get()
+    bvh = BVHTree.FromObject(high, deps)
+    me = low.data.copy()
+    cage = bpy.data.objects.new(low.name + "_Cage", me)
+    bpy.context.scene.collection.objects.link(cage)
+    cage.matrix_world = low.matrix_world.copy()
+    pushes = []
+    for v in me.vertices:
+        loc, _, _, _ = bvh.find_nearest(v.co)
+        out = (loc - v.co).dot(v.normal) if loc is not None else 0.0
+        pushes.append(min(limit, max(0.0, out) + margin))
+    for v, e in zip(me.vertices, pushes):
+        v.co = v.co + v.normal * e
+    print(f"[aaa] cage: push p50 {1000 * float(np.median(pushes)):.1f} mm, max {1000 * max(pushes):.1f} mm")
+    return cage
+
+
+def bake_pass(g, out, shader_node, target_img, bake_type, samples, target_graph=None, cage=None, ray=None):
+    """Bake `shader_node` of graph `g` into `target_img`. With `target_graph` (the
+    material of a selected-to-active low-poly target) the bake is projected from
+    the high-poly source onto the target's UVs."""
     g.links.new(shader_node.outputs[0], out.inputs["Surface"])
-    target = g.node("ShaderNodeTexImage", image=target_img)
-    for nd in g.nodes:
+    tg = target_graph or g
+    target = tg.node("ShaderNodeTexImage", image=target_img)
+    for nd in tg.nodes:
         nd.select = False
     target.select = True
-    g.nodes.active = target
+    tg.nodes.active = target
     bpy.context.scene.cycles.samples = samples
-    bpy.ops.object.bake(type=bake_type, margin=BAKE_MARGIN, use_clear=True, normal_space="TANGENT")
-    g.nodes.remove(target)
+    extra = {}
+    if target_graph is not None:
+        extra = dict(use_selected_to_active=True, max_ray_distance=ray)
+        if isinstance(cage, bpy.types.Object):
+            extra.update(use_cage=True, cage_object=cage.name)
+        else:
+            extra.update(cage_extrusion=cage)
+    bpy.ops.object.bake(type=bake_type, margin=BAKE_MARGIN, use_clear=True, normal_space="TANGENT", **extra)
+    tg.nodes.remove(target)
+
+
+def _select(active, *others):
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in (active,) + others:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = active
 
 
 def pixels(img):
@@ -391,8 +432,14 @@ def make_seamless(arr, band=0.25):
 
 
 def bake(obj, out_dir, name, layers_fn, res=2048, tileable=False, mask_scale=1.0,
-         samples=4, export_height=None, ao_distance=None, safe=True):
+         samples=4, export_height=None, ao_distance=None, safe=True, low=None, cage="auto", ray=0.008):
     """Bake ``layers_fn(context) -> [(mask, Surface), ...]`` on ``obj`` (unwrapped).
+
+    With ``low`` (a game mesh with its own UVs) the material is evaluated on the
+    high-poly ``obj`` and projected onto ``low`` (high-to-low bake): geometric
+    detail that only exists on ``obj`` - folds, subdivision - ends up in the
+    low mesh's normal map. ``cage`` is "auto" (a per-vertex cage, see make_cage) or a
+    uniform extrusion in metres; ``ray`` is the maximum ray distance.
     Returns {key: Path}."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -400,9 +447,7 @@ def bake(obj, out_dir, name, layers_fn, res=2048, tileable=False, mask_scale=1.0
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"
     scene.render.bake.margin_type = "EXTEND"
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
+    _select(obj)
 
     g, out, c = new_bake_material(obj, name, res, tileable, mask_scale, ao_distance)
     shaders = combine(g, c, layers_fn(c), safe)
@@ -412,6 +457,17 @@ def bake(obj, out_dir, name, layers_fn, res=2048, tileable=False, mask_scale=1.0
     if shaders["masks"] is not None:
         print(f"[aaa] {name}: baking edge/cavity/AO masks")
         bake_pass(g, out, shaders["masks"], c.masks_img, "EMIT", 16)
+
+    target = {}
+    if low is not None:
+        tmat = bpy.data.materials.new(f"M_{name}_BakeTarget")
+        tmat.use_nodes = True
+        low.data.materials.clear()
+        low.data.materials.append(tmat)
+        cage_obj = make_cage(low, obj) if cage == "auto" else cage
+        target = dict(target_graph=Graph(tmat), cage=cage_obj, ray=ray)
+        _select(low, obj)
+        print(f"[aaa] {name}: projecting high ({len(obj.data.polygons)} faces) -> low ({len(low.data.polygons)} faces)")
 
     raw = {}
     for key, kind, colorspace, float_buf in (("base", "EMIT", "sRGB", False),
@@ -423,9 +479,13 @@ def bake(obj, out_dir, name, layers_fn, res=2048, tileable=False, mask_scale=1.0
         print(f"[aaa] {name}: baking {key}")
         img = new_image(names[key][0] + "_raw", colorspace, res, float_buffer=float_buf)
         shader = shaders["normal" if key == "normal_gl" else key]
-        bake_pass(g, out, shader, img, kind, samples)
+        bake_pass(g, out, shader, img, kind, samples, **target)
         raw[key] = pixels(img)
 
+    if low is not None and isinstance(target.get("cage"), bpy.types.Object):
+        cage_mesh = target["cage"].data
+        bpy.data.objects.remove(target["cage"])
+        bpy.data.meshes.remove(cage_mesh)
     if tileable:
         for key in raw:
             raw[key] = make_seamless(raw[key])
@@ -434,6 +494,15 @@ def bake(obj, out_dir, name, layers_fn, res=2048, tileable=False, mask_scale=1.0
         n = raw["normal_gl"][..., :3] * 2 - 1
         n /= np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-6)
         raw["normal_gl"][..., :3] = n * 0.5 + 0.5
+
+    # Write the normal map the way the engine reads it: BC5 keeps X/Y and rebuilds
+    # Z = sqrt(1 - x^2 - y^2), so Z is always positive and the vector unit length.
+    n = raw["normal_gl"][..., :3] * 2 - 1
+    xy = n[..., :2]
+    ln = np.linalg.norm(xy, axis=-1, keepdims=True)
+    xy = np.where(ln > 0.995, xy * (0.995 / np.maximum(ln, 1e-6)), xy)
+    z = np.sqrt(np.clip(1 - (xy ** 2).sum(-1, keepdims=True), 0, 1))
+    raw["normal_gl"][..., :3] = np.concatenate([xy, z], -1) * 0.5 + 0.5
 
     paths = {}
     for key in ("base", "orm", "normal_gl"):

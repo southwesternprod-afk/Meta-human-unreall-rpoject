@@ -51,8 +51,18 @@ def layers(c):
 engine.bake(obj, out_dir, "MyAsset", layers, res=4096)   # obj must be UV-unwrapped
 engine.assign_baked_material(obj, out_dir, "MyAsset")
 ```
+- **High-to-low (the AAA default for anything with sculpted/subdivided detail):** build a
+  detailed bake source and a lighter game mesh, unwrap both, then
+  `engine.bake(high, out_dir, name, layers, low=game_mesh, cage=0.004, ray=0.008)`. The
+  material and every fold/bevel of `high` land in the game mesh's normal map. Keep the
+  game mesh within ~2 mm of the source (measure it) and set `cage` a little above that.
 - `mask_scale` (bake arg) scales the edge/cavity/AO probe distances: 1.0 for props and
-  clothing, 3-10 for buildings.
+  clothing, 3-10 for buildings. `ao_distance` overrides the AO reach (0.02-0.03 for
+  layered clothing so hidden inner layers don't go black).
+- Thin plates (< 3 mm): the baked edge mask flags them everywhere - give the preset an edge
+  mask from a distance-to-rim attribute: `L.steel_blackened(c.with_masks(edge=my_edge))`.
+- Asset bakes are edge-padded automatically; for sets from elsewhere run
+  `python3 ROOT/scripts/aaa.py pad <texdir>` (unpadded black space bleeds dark seams in mips).
 - Weave/ring/quilt presets need 2D surface coords in metres: pass `P2` (a vector attribute)
   or rely on `UV * uv_size`.
 - Custom looks: build a `Surface(base, rough, metal, height, bump)` from `c.g` (a node
@@ -87,5 +97,8 @@ Read `reference/pbr-standards.md` for the numbers. In short:
 5. **No visible patterns** - no voronoi webs, no repeating blotches; use `warp` and
    multi-scale `breakup`. Look at the render from 1-2 m and from 20 cm.
 6. **Texel density** - characters ~10.24 px/cm (4K for a torso garment), props 5.12 px/cm.
-7. **Deliver** BaseColor (sRGB), ORM (linear), Normal DirectX for Unreal, OpenGL copy
-   for Blender/glTF, all power-of-two; validator passes; ball or asset render reviewed.
+7. **Budget** - hero character piece ~60-110k tris at LOD0 (+ LODs); bake detail down
+   instead of modelling it into the game mesh; delete faces nobody can see.
+8. **Deliver** BaseColor (sRGB), ORM (linear), Normal DirectX for Unreal, OpenGL copy
+   for Blender/glTF, all power-of-two and edge-padded; validator passes; ball or asset
+   render reviewed; skinned assets pose-tested.

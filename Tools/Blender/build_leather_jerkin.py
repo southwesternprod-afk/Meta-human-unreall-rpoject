@@ -60,6 +60,10 @@ class Piece:
         self.thickness, self.rigid = thickness, rigid
         self.pc = {}          # vert -> (u, v) pattern coordinates in metres
         self.edgedist = {}    # vert -> distance to the nearest open edge (metres)
+        self.seamdist = {}    # vert -> distance to the nearest sewn panel seam (metres)
+        self.hide = {}        # vert -> hide/panel id offset (leather tone variation)
+        self.hard = False     # small hard-surface part: sharp shading on crisp edges
+        self.inner = set()    # faces on the inside of thickened pieces (lower texel density)
 
 
 EDGE_CAP = 0.05
@@ -188,7 +192,9 @@ def soften_leather(body, bm):
 
 
 # --- jerkin body ------------------------------------------------------------------
-def build_torso(body):
+def build_torso(body, high=True):
+    """Jerkin body shell. `high` subdivides before the fold displacement (bake
+    source); the game mesh gets the same folds at the shell's own resolution."""
     arm = body.family(r"(upperarm|lowerarm|hand|thumb_|index_|middle_|ring_|pinky_)")
     z = body.co[:, 2]
     mask = (arm < 0.30) & (z > WAIST_Z - 0.03) & (z < ck.NECK_BASE_Z + 0.002)
@@ -209,7 +215,8 @@ def build_torso(body):
     inside = [f for f in bm.faces
               if (c := f.calc_center_median()).y < -0.03 and c.z > V_BOTTOM_Z + slope * abs(c.x)]
     bmesh.ops.delete(bm, geom=inside, context="FACES")
-    bm = subdivide(bm)
+    if high:
+        bm = subdivide(bm)
     soften_leather(body, bm)
     return bm
 
@@ -222,112 +229,97 @@ def bottom_and_top_loops(bm):
     return bottom, top
 
 
-# Skirt panels: split angles (radians from centre front, counter-clockwise) and the
-# height where each slit opens. Front, left hip, back, right hip.
-SKIRT_SPLITS = ((0.0, 0.900), (math.pi / 2, 0.890), (math.pi, 0.885), (3 * math.pi / 2, 0.890))
+# Skirt: eight gores sewn together (seams at the centre front/back, sides and between),
+# each gore cut with a little extra width so it bows out between its seams.
+SKIRT_GORES = 8
 SKIRT_TOP_Z = WAIST_Z + 0.006   # tucked under the waist welt
-CORNER_LIFT = 0.028             # panels' bottom corners are rounded up by this much
-PANEL_BELLY = 0.010             # panel hems dip this much lower in the middle
+GORE_BELLY = 0.010              # how far each gore bows out between its seams at the hem
+MAIL_DROP = 0.022               # the mail skirt shows this far below the leather hem
 
 
 def build_skirt(body, torso_bm):
-    """Four leather panels (front, back and both hips) hanging from the waist seam:
-    each flares on its own with a slight outward belly, rounded bottom corners and
-    soft drape folds; the slits between them open towards the hem. A mail skirt
-    hangs inside and shows through the slits and under the corners."""
+    """A-line skirt of eight sewn gores hanging from the waist seam: flush with the
+    jerkin at the top, flaring over the hips, sunken seams with the gores bowing
+    out between them, soft drape folds and a slightly uneven hem. A short mail
+    skirt (only what shows below the hem) hangs inside."""
     bottom, _ = bottom_and_top_loops(torso_bm)
     pts = [v.co.copy() for v in bottom]
     c = np.mean([p[:2] for p in pts], axis=0)
-    n = 240
+    n = SKIRT_GORES * 24
     ring = resample_loop([Vector((p.x, p.y, SKIRT_TOP_Z)) for p in pts], n)
-    # order by angle starting at the front, counter-clockwise
     ring.sort(key=lambda p: (angle_of(p, c) - FRONT) % (2 * math.pi))
     angles = np.array([(angle_of(p, c) - FRONT) % (2 * math.pi) for p in ring])
     r_top = np.array([math.hypot(p.x - c[0], p.y - c[1]) for p in ring]) - 0.002
 
     arms = body.family(ARMS)
-    legs = body.co[(body.co[:, 2] < WAIST_Z) & (body.co[:, 2] > HEM_Z - 0.06) & (arms < 0.2)]
+    legs = body.co[(body.co[:, 2] < WAIST_Z) & (body.co[:, 2] > HEM_Z - MAIL_DROP - 0.06) & (arms < 0.2)]
     leg_ang = (np.arctan2(legs[:, 1] - c[1], legs[:, 0] - c[0]) - FRONT) % (2 * math.pi)
     leg_r = np.hypot(legs[:, 0] - c[0], legs[:, 1] - c[1])
 
     # radius profile on a height grid: flare from the waist, clear of the hips and thighs
-    zg = np.linspace(SKIRT_TOP_Z, HEM_Z - PANEL_BELLY - 0.004, 30)
-    span = SKIRT_TOP_Z - zg[-1]
+    zg = np.linspace(SKIRT_TOP_Z, HEM_Z - MAIL_DROP - 0.01, 34)
+    span = SKIRT_TOP_Z - HEM_Z
     radii = []
     prev = r_top
     for zr in zg:
         t = (SKIRT_TOP_Z - zr) / span
-        base = r_top * (1 + 0.26 * t ** 1.3)
+        base = r_top * (1 + 0.26 * max(t, 0) ** 1.3)
         sel = np.abs(legs[:, 2] - zr) < 0.012
         req = np.zeros(n)
         for j, a in enumerate(angles):
             d = np.abs((leg_ang[sel] - a + math.pi) % (2 * math.pi) - math.pi)
             near = leg_r[sel][d < math.radians(5)]
             # flush with the jerkin at the seam, more room over the thighs
-            req[j] = near.max() + 0.013 + 0.013 * t if len(near) else 0.0
+            req[j] = near.max() + 0.013 + 0.013 * min(t, 1.0) if len(near) else 0.0
         r = circular_smooth(np.maximum(base, req), k=5, passes=3)
         r = np.maximum(r, prev)           # skirts only flare outwards going down
         radii.append(r)
         prev = r
     radii = np.array(radii)
-    # soft, irregular drape folds growing towards the hem
     folds = np.array([0.5 * math.sin(7 * a + 1.3) + 0.3 * math.sin(12 * a + 0.4) for a in angles])
     for i, zr in enumerate(zg):
-        t = (SKIRT_TOP_Z - zr) / span
+        t = min((SKIRT_TOP_Z - zr) / span, 1.0)
         wobble = np.array([mnoise.noise(Vector((2 * math.cos(a), 2 * math.sin(a), 1.5 * t))) for a in angles])
-        radii[i] += (0.0006 + 0.0095 * t ** 1.3) * (folds + 0.45 * wobble)
+        radii[i] += (0.0006 + 0.0090 * t ** 1.3) * (folds + 0.45 * wobble)
 
     def radius_at(z, j):
         return float(np.interp(-z, -zg, radii[:, j]))
 
-    def at(j, z, r, gap=0.0):
+    def at(j, z, r):
         a = angles[j % n] + FRONT
-        tangent = Vector((-math.sin(a), math.cos(a), 0))
-        return Vector((c[0] + r * math.cos(a), c[1] + r * math.sin(a), z)) + tangent * gap
+        return Vector((c[0] + r * math.cos(a), c[1] + r * math.sin(a), z))
 
-    def slit_gap(z, top):
-        return 0.0 if z >= top else 0.004 + 0.022 * (top - z) / (top - HEM_Z)
-
-    split_cols = [int(np.argmin(np.abs((angles - a + math.pi) % (2 * math.pi) - math.pi))) for a, _ in SKIRT_SPLITS]
-    col_arc = 2 * math.pi / n * float(np.mean(r_top))
-    rows_n = 24
-    bm = bmesh.new()
-    for k, (j0, (_, top0)) in enumerate(zip(split_cols, SKIRT_SPLITS)):
-        j1 = split_cols[(k + 1) % len(split_cols)]
-        top1 = SKIRT_SPLITS[(k + 1) % len(SKIRT_SPLITS)][1]
-        m = (j1 - j0) % n
-        columns = []
-        for kk in range(m + 1):
-            j = j0 + kk
-            u = kk / m
-            edge = min(kk, m - kk) * col_arc                      # distance to the nearest slit
-            hem = HEM_Z + CORNER_LIFT * (1 - smooth01(edge / 0.05)) - PANEL_BELLY * math.sin(math.pi * u)
-            col = []
-            for i in range(rows_n):
-                t = i / (rows_n - 1)
-                z = SKIRT_TOP_Z + (hem - SKIRT_TOP_Z) * t
-                r = radius_at(z, j % n) + 0.012 * math.sin(math.pi * u) * t ** 1.5   # panel belly
-                gap = 0.0
-                # the panel edges along a slit part and curl slightly outwards
-                for dk, curl in ((0, 1.0), (1, 0.5), (2, 0.2)):
-                    if kk == dk and z < top0:
-                        gap = slit_gap(z, top0) if dk == 0 else 0.0
-                        r += 0.18 * curl * slit_gap(z, top0)
-                    elif kk == m - dk and z < top1:
-                        gap = -slit_gap(z, top1) if dk == 0 else 0.0
-                        r += 0.18 * curl * slit_gap(z, top1)
-                col.append(at(j, z, r, gap))
-            columns.append(col)
-        rows = [[columns[kk][i] for kk in range(m + 1)] for i in range(rows_n)]
-        loft_grid(rows, closed=False, bm=bm)
-    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)   # closes the seams above the slits
+    gore = 2 * math.pi / SKIRT_GORES
+    hem_wave = [0.004 * math.sin(5 * a + 0.7) + 0.002 * math.sin(11 * a + 2.1) for a in angles]
+    rows_n = 18
+    rows, info = [], []
+    for i in range(rows_n):
+        t = i / (rows_n - 1)
+        row, inf = [], []
+        for j, a in enumerate(angles):
+            u = (a % gore) / gore                                   # 0..1 across this gore
+            seam_arc = min(u, 1 - u) * gore * float(r_top[j])
+            z = SKIRT_TOP_Z + (HEM_Z + hem_wave[j] - SKIRT_TOP_Z) * t
+            r = radius_at(z, j)
+            r += GORE_BELLY * math.sin(math.pi * u) * t ** 1.3       # gore bows out between seams
+            r -= 0.0016 * math.exp(-(seam_arc / 0.004) ** 2)         # sunken seam
+            row.append(at(j, z, r))
+            inf.append((seam_arc, int(a // gore)))
+        rows.append(row)
+        info.append(inf)
+    bm, vr = loft_grid(rows)
     orient_outward(bm)
     piece = Piece("Skirt", bm, LEATHER, MAIN, thickness=0.0045)
+    for i, row in enumerate(vr):
+        for j, v in enumerate(row):
+            piece.seamdist[v] = info[i][j][0]
+            piece.hide[v] = 0.37 * info[i][j][1]                    # each gore its own hide
 
-    # mail skirt hanging inside the leather one, seen through the slits and under the corners
+    # mail skirt: only the part that shows below the hem (plus a hidden overlap)
     mail_rows = []
-    for i in range(rows_n):
-        z = SKIRT_TOP_Z + (HEM_Z - 0.004 - SKIRT_TOP_Z) * i / (rows_n - 1)
+    m_rows = 6
+    for i in range(m_rows):
+        z = HEM_Z + 0.05 + (-MAIL_DROP - 0.05) * i / (m_rows - 1)
         mail_rows.append([at(j, z, radius_at(z, j) - 0.0075) for j in range(n)])
     mbm, mvr = loft_grid(mail_rows)
     orient_outward(mbm)
@@ -343,12 +335,12 @@ def build_collar(body, torso_bm):
     _, top = bottom_and_top_loops(torso_bm)
     c = np.mean([v.co[:2] for v in top], axis=0)
     loop = sorted([v.co.copy() for v in top], key=lambda p: (angle_of(p, c) - FRONT) % (2 * math.pi))
-    n = 160
+    n = 120
     base = resample_loop(loop, n)
     base.sort(key=lambda p: (angle_of(p, c) - FRONT) % (2 * math.pi))
     gap = math.radians(26)
     rows = []
-    steps = 12
+    steps = 9
     keep = [p for p in base if gap < (angle_of(p, c) - FRONT) % (2 * math.pi) < 2 * math.pi - gap]
     for i in range(steps + 1):
         t = i / steps
@@ -414,17 +406,42 @@ def strap_from_rows(name, tone, thickness, rows, along, closed=False):
     return piece
 
 
-def surface_ribbon(samples, width, lift, name, tone, thickness=0.003, crown=0.0004):
+def tip_factor(s_from_end, radius):
+    """Width factor that rounds a strap end off over `radius` (0 = square end)."""
+    if radius <= 0 or s_from_end >= radius:
+        return 1.0
+    x = (radius - s_from_end) / radius
+    return max(0.18, math.sqrt(max(0.0, 1 - x * x)))
+
+
+def surface_ribbon(samples, width, lift, name, tone, thickness=0.003, crown=0.0004, tips=(0.0, 0.0)):
     """Strap lying on a surface. samples: [(location, normal), ...] along its length.
-    Five columns across with a slight crown, so it shades like thick leather."""
+    Five columns across with a slight crown, so it shades like thick leather.
+    `tips` rounds the start/end over that length (use about half the width)."""
     centers = [loc + n * lift for loc, n in samples]
-    rows, along = [], []
+    along = [0.0]
+    for a, b in zip(centers, centers[1:]):
+        along.append(along[-1] + (b - a).length)
+    rows = []
     for i, (c, (loc, n)) in enumerate(zip(centers, samples)):
         t = centers[min(i + 1, len(centers) - 1)] - centers[max(i - 1, 0)]
         side = n.cross(t).normalized()
-        along.append(along[-1] + (c - centers[i - 1]).length if i else 0.0)
-        rows.append([(c + side * (k * width / 2) + n * (crown * (1 - k * k)), k * width / 2) for k in ACROSS])
+        f = min(tip_factor(along[i], tips[0]), tip_factor(along[-1] - along[i], tips[1]))
+        rows.append([(c + side * (k * width / 2 * f) + n * (crown * (1 - k * k)), k * width / 2) for k in ACROSS])
     return strap_from_rows(name, tone, thickness, rows, along), centers
+
+
+def keeper(center, normal, along, strap_width, height, name="Keeper"):
+    """Leather keeper loop wrapped across a strap (holds the strap's tail flat)."""
+    n = normal.normalized()
+    u = (along - n * along.dot(n)).normalized()
+    w = n.cross(u)
+    half = strap_width / 2 + 0.0025
+    profile = ((-1.15, 0.0), (-1.0, 0.6), (-0.8, 1.0), (0.0, 1.08), (0.8, 1.0), (1.0, 0.6), (1.15, 0.0))
+    rows = []
+    for du in (-0.0045, 0.0045):
+        rows.append([(center + u * du + w * (k * half) + n * (h * height), k * half) for k, h in profile])
+    return strap_from_rows(name, STRAP, 0.0016, rows, [0.0, 0.009])
 
 
 def front_line(bvh, p0, p1, steps):
@@ -448,8 +465,8 @@ def build_front_details(torso_bm):
     # five buckled closure straps across the front
     # (the shoulder straps cross between the first and second one)
     for z in (1.487, 1.31, 1.22, 1.13, 1.04):
-        samples = front_line(bvh, (-0.058, z), (0.062, z), 24)
-        strap, centers = surface_ribbon(samples, 0.021, 0.0045, f"Closure_{z}", STRAP)
+        samples = front_line(bvh, (-0.058, z), (0.064, z), 28)
+        strap, centers = surface_ribbon(samples, 0.021, 0.0045, f"Closure_{z}", STRAP, tips=(0.008, 0.0105))
         pieces.append(strap)
         loc, n = samples[-4]
         pieces.append(buckle(loc + n * 0.0035, n, centers[-1] - centers[-6], 0.027, 0.03))
@@ -465,7 +482,7 @@ def build_shoulder_straps(body, torso_bm):
     torso_bvh = BVHTree.FromBMesh(torso_bm)
     body.bm.faces.ensure_lookup_table()
     armw = body.family(ARMS)
-    width, n = 0.034, 280
+    width, n = 0.034, 200
     Y = Vector((0, 1, 0))
     pieces = []
     # (shoulder side, base lift, extra lift over the closures/placket); the +X
@@ -552,6 +569,15 @@ def build_shoulder_straps(body, torso_bm):
         k = (j + step * 13) % n
         for sgn in (-1, 1):
             pieces.append(rivet(tops[k] + frames[k][1] * sgn * 0.009, frames[k][0], r=0.0033))
+        # the strap's free end comes out of the buckle and lies on top, held by a keeper
+        idx = [(j - step * i) % n for i in range(1, 15)]
+        tail = [(tops[i] + frames[i][0] * 0.0034, frames[i][0]) for i in idx]
+        tail_piece, tail_c = surface_ribbon(tail, width * 0.9, 0.0, f"StrapTail_{s}", STRAP,
+                                            thickness=0.003, tips=(0.0, 0.015))
+        pieces.append(tail_piece)
+        kk = idx[6]
+        pieces.append(keeper(tops[kk] + frames[kk][0] * 0.0002, frames[kk][0], tail_c[7] - tail_c[5],
+                             width, 0.0078, f"StrapKeeper_{s}"))
     return pieces
 
 
@@ -560,7 +586,7 @@ def build_waist_band(torso_bm, skirt_bm):
     a rounded leather strip that follows the body's contour (a belt goes over it)."""
     bvhs = [BVHTree.FromBMesh(torso_bm), BVHTree.FromBMesh(skirt_bm)]
     c = np.mean([v.co[:2] for v in torso_bm.verts if abs(v.co.z - WAIST_Z) < 0.02], axis=0)
-    seg = 160
+    seg = 128
     profile = ((-0.013, 0.0006), (-0.0105, 0.0024), (-0.005, 0.0034), (0.009, 0.0034),
                (0.0145, 0.0024), (0.017, 0.0006))                    # rounded cross-section
     rows = []
@@ -620,13 +646,17 @@ def cylinder_pc(piece, a, b):
         piece.pc[v] = (ang * 0.05, along)
 
 
-def build_sleeves(body):
+def build_sleeves(body, high=True):
+    """Quilted gambeson sleeves. The game mesh (`high=False`) drops the faces
+    hidden under the mail sleeves and bracers (with a margin for deformation)."""
     armw = body.family(r"(upperarm|lowerarm|hand|thumb_|index_|middle_|ring_|pinky_)")
     hand = body.family(r"(hand|thumb_|index_|middle_|ring_|pinky_)")
     mask = (armw > 0.22) & (hand < 0.15)
     bm = ck.shell_from_faces(body, body.region_faces(mask), offset=0.0085, smooth_iters=12,
                              smooth_factor=0.5, min_offset=0.0065)
-    bm = subdivide(bm)
+    if high:
+        bm = subdivide(bm)
+    upper = body.family(r"upperarm")
     pieces = []
     for side in (1, -1):
         sh, el, wr = arm_axes(body, side)
@@ -637,11 +667,33 @@ def build_sleeves(body):
         cut_plane(part, wr - d * 0.03, d)
         orient_outward(part)
         quilt_sleeve(body, part, sh, el, wr)
+        if not high:
+            hidden = []
+            for f in part.faces:
+                if all(sleeve_hidden(body, upper, v.co, sh, el, wr) for v in f.verts):
+                    hidden.append(f)
+            bmesh.ops.delete(part, geom=hidden, context="FACES")
         p = Piece(f"Sleeve_{side}", part, CLOTH)
         cylinder_pc(p, sh, wr)
         pieces.append(p)
     bm.free()
     return pieces
+
+
+def sleeve_hidden(body, upper, co, sh, el, wr, margin=0.03):
+    """Is this point of the gambeson covered by the mail sleeve or the bracer?"""
+    fore = wr - el
+    t = (co - el).dot(fore.normalized()) / fore.length
+    if 0.30 + margin / fore.length < t < 0.95:              # under the bracer
+        return True
+    up = el - sh
+    s_up = (co - sh).dot(up.normalized())
+    if s_up < up.length - 0.035 - margin:                    # above the mail sleeve's lower edge
+        loc, _, idx, _ = body.bvh.find_nearest(co)
+        if idx is not None:
+            w = float(np.mean([upper[v.index] for v in body.bm.faces[idx].verts]))
+            return w > 0.5                                   # well inside the mail-covered area
+    return False
 
 
 def quilt_sleeve(body, bm, sh, el, wr):
@@ -704,7 +756,7 @@ def build_bracers(body):
         ref = Vector((0, -1, 0))
         ref = (ref - d * ref.dot(d)).normalized()
         side_v = d.cross(ref)
-        seg, ts = 64, np.linspace(0.30, 0.93, 32)
+        seg, ts = 48, np.linspace(0.30, 0.93, 22)
         radii = []
         for t in ts:
             o = el + axis * t
@@ -757,30 +809,45 @@ def o_on_surface(o, direction, radii, ts, t0, extra):
 
 
 def buckle(center, normal, along, width, height, bar=0.0028):
-    """Rectangular iron buckle frame lying on a surface."""
+    """Forged buckle: a rounded-rectangle frame of round wire lying on the strap,
+    with a prong hinged on one side resting across the frame."""
     n = normal.normalized()
-    u = along.normalized()
-    u = (u - n * u.dot(n)).normalized()
+    u = (along - n * along.dot(n)).normalized()
     w = n.cross(u)
     bm = bmesh.new()
-    outer = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
+    hh, hw = height / 2 - bar / 2, width / 2 - bar / 2          # wire centreline half-sizes
+    rc = min(hh, hw) * 0.45                                   # corner radius
+    path = []
+    for (su, sw), a0 in (((1, 1), 0.0), ((-1, 1), 90.0), ((-1, -1), 180.0), ((1, -1), 270.0)):
+        cu, cw = su * (hh - rc), sw * (hw - rc)
+        for k in range(6):
+            a = math.radians(a0 + 90.0 * k / 5)
+            path.append((cu + rc * math.cos(a), cw + rc * math.sin(a)))
+    lift = bar / 2 + 0.0004
 
-    def ring(scale_w, scale_h, lift):
-        return [bm.verts.new(center + n * lift + u * (sx * height / 2 * scale_h) + w * (sy * width / 2 * scale_w))
-                for sx, sy in outer]
+    def tube(points, radius, closed, sides=6, lift_fn=lambda i: lift):
+        pos = [center + u * a + w * b + n * lift_fn(i) for i, (a, b) in enumerate(points)]
+        rings = []
+        m = len(pos)
+        for i, q in enumerate(pos):
+            t = (pos[(i + 1) % m] if closed or i < m - 1 else q) - (pos[i - 1] if closed or i > 0 else q)
+            t = t.normalized()
+            b2 = t.cross(n).normalized()
+            rings.append([bm.verts.new(q + (n * math.cos(2 * math.pi * k / sides) +
+                                            b2 * math.sin(2 * math.pi * k / sides)) * radius) for k in range(sides)])
+        pairs = list(zip(rings, rings[1:])) + ([(rings[-1], rings[0])] if closed else [])
+        for r0, r1 in pairs:
+            for k in range(sides):
+                bm.faces.new((r0[k], r0[(k + 1) % sides], r1[(k + 1) % sides], r1[k]))
+        if not closed:
+            for ring in (rings[0], rings[-1]):
+                bm.faces.new(ring)
 
-    o0 = ring(1.0, 1.0, 0.0015)
-    i0 = ring(1 - 2 * bar / width, 1 - 2 * bar / height, 0.0015)
-    o1 = ring(1.0, 1.0, 0.0045)
-    i1 = ring(1 - 2 * bar / width, 1 - 2 * bar / height, 0.0045)
-    for a, b in ((o0, o1), (o1, i1), (i1, i0)):
-        for j in range(4):
-            k = (j + 1) % 4
-            bm.faces.new((a[j], a[k], b[k], b[j]))
-    # prong across the middle
-    pr = [center + n * 0.004 + u * (s * height * 0.42) + w * (t * 0.0012) for s in (-1, 1) for t in (-1, 1)]
-    pv = [bm.verts.new(p) for p in pr]
-    bm.faces.new((pv[0], pv[2], pv[3], pv[1]))
+    tube(path, bar / 2, closed=True)
+    # prong: hinged on the -u side, arching over the strap to rest on the +u side
+    prong = [(-hh + (2 * hh) * i / 6, 0.0) for i in range(7)]
+    tube(prong, bar * 0.36, closed=False, sides=5,
+         lift_fn=lambda i: lift + bar * 0.55 * math.sin(math.pi * i / 6))
     orient_outward(bm)
     return Piece("Buckle", bm, STEEL, rigid=True)
 
@@ -869,8 +936,10 @@ def build_pauldrons(body, garment):
             alphas = np.radians(np.linspace(a0, a1, 14 if name == "Cap" else 7))
             phis = np.radians(np.linspace(-PAULDRON_PHI, PAULDRON_PHI, 48))
             for k, alpha in enumerate(alphas):
-                roll = 0.0025 if k == len(alphas) - 1 else 0.0
-                rows.append([C + direction(alpha, phi) * (radius(alpha, phi) + extra + roll) for phi in phis])
+                roll = 0.0025 if k == len(alphas) - 1 else 0.0          # rolled lower edge
+                rows.append([C + direction(alpha, phi) * (radius(alpha, phi) + extra + roll +
+                                                          (0.0022 if jj in (0, len(phis) - 1) else 0.0))
+                             for jj, phi in enumerate(phis)])            # ... and rolled ends
             bm, vr = loft_grid(rows, closed=False)
             for f in bm.faces:                     # face away from the shoulder joint
                 if f.normal.dot(f.calc_center_median() - C) < 0:
@@ -894,6 +963,62 @@ def build_pauldrons(body, garment):
     return pieces
 
 
+def build_arming_straps(body, garment):
+    """Leather strap round each upper arm just below the pauldron's lowest lame,
+    buckled at the front - what holds a real pauldron's lames to the arm."""
+    pieces = []
+    for side in (1, -1):
+        sh, el, wr = arm_axes(body, side)
+        A = (el - sh).normalized()
+        out = Vector((side, 0, 0))
+        e2 = (out - A * out.dot(A)).normalized()
+        e3 = A.cross(e2)
+        P = sh + e2 * 0.004 - A * 0.012 + A * 0.118   # just clear of the pauldron's overhang
+        seg = 48
+        dirs = [e2 * math.cos(2 * math.pi * k / seg) + e3 * math.sin(2 * math.pi * k / seg) for k in range(seg)]
+        rr = []
+        for d in dirs:
+            hit = garment.ray_cast(P + d * 0.2, -d, 0.2)
+            rr.append(0.2 - hit[3] if hit[0] is not None else 0.06)
+        rr = np.array(rr)
+        for _ in range(40):                                    # taut around the arm
+            rr = np.maximum(rr, circular_smooth(rr, k=2, passes=1))
+        rows = []
+        for k, h in zip((-1.0, -0.55, 0.0, 0.55, 1.0), (0.0008, 0.0022, 0.0026, 0.0022, 0.0008)):
+            rows.append([P + A * (k * 0.011) + d * (r + h) for d, r in zip(dirs, rr)])
+        bm, vr = loft_grid(rows)
+        orient_outward(bm)
+        strap = Piece(f"ArmingStrap_{side}", bm, LEATHER, STRAP, thickness=0.003)
+        cylinder_pc(strap, sh, el)
+        pieces.append(strap)
+        i = int(np.argmin([d.y for d in dirs]))                # buckle at the front
+        tangent = dirs[(i + 1) % seg] - dirs[i - 1]
+        pieces.append(buckle(P + dirs[i] * (rr[i] + 0.0026), dirs[i], tangent, 0.027, 0.030))
+    return pieces
+
+
+def build_belt_loops(bvhs, center):
+    """Four leather belt loops over the waist welt, ready for the separate belt."""
+    pieces = []
+    for deg in (62, 128, -128, -62):                          # around from the centre front
+        a = FRONT + math.radians(deg)
+        d = Vector((math.cos(a), math.sin(a), 0))
+        samples = []
+        for z in np.linspace(WAIST_Z - 0.026, WAIST_Z + 0.030, 12):
+            o = Vector((center[0], center[1], z))
+            r = 0.0
+            for bvh in bvhs:
+                hit = bvh.ray_cast(o + d * 0.6, -d, 0.6)
+                if hit[0] is not None:
+                    r = max(r, (hit[0] - o).length)
+            samples.append((o + d * r, d))
+        lifts = [0.0006 + 0.0022 * math.sin(math.pi * t) ** 0.5 for t in np.linspace(0, 1, len(samples))]
+        samples = [(loc + nrm * (lf - 0.0006), nrm) for (loc, nrm), lf in zip(samples, lifts)]
+        loop, _ = surface_ribbon(samples, 0.016, 0.0006, f"BeltLoop_{deg}", STRAP, thickness=0.0025)
+        pieces.append(loop)
+    return pieces
+
+
 def rivet(center, normal, r=0.0038):
     n = normal.normalized()
     u = n.orthogonal().normalized()
@@ -912,25 +1037,38 @@ def rivet(center, normal, r=0.0038):
     for j in range(seg):
         bm.faces.new((rings[-1][j], rings[-1][(j + 1) % seg], tip))
     orient_outward(bm)
-    return Piece("Rivet", bm, STEEL, rigid=True)
+    piece = Piece("Rivet", bm, STEEL, rigid=True)
+    piece.hard = True
+    return piece
 
 
 # --- assembly --------------------------------------------------------------------------
-def build_all(body):
-    torso_bm = build_torso(body)
+def build_all(body, high=True):
+    """Every piece of the top. `high` is the bake source (subdivided torso and
+    sleeves); `high=False` is the game mesh: game-resolution torso and sleeves,
+    with the gambeson hidden under mail and bracers removed. All other pieces are
+    identical in both, and everything is placed on the high-resolution torso."""
+    torso_ref = build_torso(body, high=True)
+    torso_bm = torso_ref if high else build_torso(body, high=False)
     torso = Piece("Torso", torso_bm, LEATHER, MAIN, thickness=0.004)
-    skirt, mail_fauld = build_skirt(body, torso_bm)
-    band = build_waist_band(torso_bm, skirt.bm)
-    collar = build_collar(body, torso_bm)
+    skirt, mail_fauld = build_skirt(body, torso_ref)
+    band = build_waist_band(torso_ref, skirt.bm)
+    collar = build_collar(body, torso_ref)
     pieces = [torso, skirt, mail_fauld, collar, build_mail_gorget(body), band]
-    pieces += build_front_details(torso_bm)
-    straps = build_shoulder_straps(body, torso_bm)
-    sleeves = build_sleeves(body)
+    c = np.mean([v.co[:2] for v in torso_ref.verts if abs(v.co.z - WAIST_Z) < 0.02], axis=0)
+    pieces += build_belt_loops([BVHTree.FromBMesh(b) for b in (torso_ref, skirt.bm, band.bm)], c)
+    pieces += build_front_details(torso_ref)
+    straps = build_shoulder_straps(body, torso_ref)
+    body.bm.faces.ensure_lookup_table()
+    sleeves = build_sleeves(body, high)
     mail_sleeves = build_mail_sleeves(body)
     pieces += straps + sleeves + mail_sleeves
     pieces += build_bracers(body)
-    under = [p for p in [torso] + straps + sleeves + mail_sleeves if not p.rigid]
-    pieces += build_pauldrons(body, pieces_bvh(under))
+    ref = Piece("TorsoRef", torso_ref, LEATHER)
+    under = [p for p in [ref] + straps + sleeves + mail_sleeves if not p.rigid]
+    garment = pieces_bvh(under)
+    pieces += build_pauldrons(body, garment)
+    pieces += build_arming_straps(body, pieces_bvh(mail_sleeves))
     return pieces
 
 
@@ -964,9 +1102,12 @@ def thicken(piece):
                 continue
             if v in piece.pc:
                 piece.pc[w] = piece.pc[v]
+            for d in (piece.seamdist, piece.hide):
+                if v in d:
+                    d[w] = d[v]
             piece.edgedist[w] = 0.0 if w is mid.get(v) else piece.edgedist.get(v, EDGE_CAP)
     for f in outer_faces:
-        bm.faces.new([inner[v] for v in reversed(f.verts)])
+        piece.inner.add(bm.faces.new([inner[v] for v in reversed(f.verts)]))
     for e in boundary:
         f = e.link_faces[0]
         a, b = e.verts
@@ -975,41 +1116,50 @@ def thicken(piece):
         if loop.vert is not a:
             a, b = b, a
         bm.faces.new((b, a, mid[a], mid[b]))
-        bm.faces.new((mid[b], mid[a], inner[a], inner[b]))
+        piece.inner.add(bm.faces.new((mid[b], mid[a], inner[a], inner[b])))
     bm.normal_update()
 
 
 def pieces_to_object(pieces, name):
-    """Merge pieces into one mesh object with part/tone/pc/rigid_id attributes."""
+    """Merge pieces into one mesh object with part/tone/pc/rigid_id/edgedist/
+    seamdist/hide point attributes and an 'inner' face attribute."""
     bm = bmesh.new()
-    part_l, tone_l, pc_l, rid_l, ed_l = [], [], [], [], []
-    for rid, p in enumerate(pieces):
+    part_l, tone_l, pc_l, rid_l, ed_l, seam_l, hide_l, inner_l = [], [], [], [], [], [], [], []
+    for pid, p in enumerate(pieces):
         src = p.bm
         p.edgedist = edge_distance(src)
         if p.thickness:
             thicken(p)
         mapping = {}
         for v in src.verts:
-            nv = bm.verts.new(v.co)
-            mapping[v] = nv
+            mapping[v] = bm.verts.new(v.co)
             part_l.append(p.part)
             tone_l.append(p.tone)
             pc_l.append(p.pc.get(v, (0.0, 0.0)))
-            rid_l.append(rid if p.rigid else -1)
+            rid_l.append(pid if p.rigid else -1)
             ed_l.append(p.edgedist.get(v, EDGE_CAP))
+            seam_l.append(p.seamdist.get(v, EDGE_CAP))
+            hide_l.append(pid + p.hide.get(v, 0.0))
         for f in src.faces:
             try:
-                bm.faces.new([mapping[v] for v in f.verts])
+                nf = bm.faces.new([mapping[v] for v in f.verts])
             except ValueError:
-                pass
-    for f in bm.faces:
-        f.smooth = True
+                continue
+            nf.smooth = True
+            inner_l.append(1.0 if f in p.inner else 0.0)
+            if p.hard:
+                for e in nf.edges:
+                    if len(e.link_faces) == 2 and e.calc_face_angle(0.0) > math.radians(50):
+                        e.smooth = False
     obj = ck.bm_to_object(bm, name)
     ck.set_attr(obj, "part", part_l)
     ck.set_attr(obj, "tone", tone_l)
     ck.set_attr(obj, "rigid_id", rid_l)
     ck.set_attr(obj, "pc", pc_l, kind="FLOAT2")
     ck.set_attr(obj, "edgedist", ed_l)
+    ck.set_attr(obj, "seamdist", seam_l)
+    ck.set_attr(obj, "hide", hide_l)
+    ck.set_attr(obj, "inner", inner_l, domain="FACE")
     return obj
 
 
@@ -1055,7 +1205,18 @@ def jerkin_layers(c):
     seam_stitch = g.mul(g.mul(g.maxf(near(ax, g.add(seam_x, 0.0065), 0.0008),
                                      near(ax, g.sub(seam_x, 0.0065), 0.0008)), dashes(P["Z"], 0.0065)), is_body)
     edge_stitch = g.mul(near(ed, g.mix_float(0.0068, 0.0032, is_strap), 0.0008), stitch_dots(0.0042))
-    stitch = g.maxf(seam_stitch, edge_stitch)
+    # sewn gore seams on the skirt (distance-to-seam attribute from the build)
+    sd = c.attr("seamdist")
+    gore_seam = near(sd, 0.0, 0.0011)
+    seam = g.maxf(seam, gore_seam)
+    piping = g.maxf(piping, near(sd, 0.0, 0.004))
+    gore_stitch = g.mul(near(sd, 0.0062, 0.0008), dashes(P["Z"], 0.0065))
+    stitch = g.maxf(g.maxf(seam_stitch, edge_stitch), gore_stitch)
+    # every piece (and every skirt gore) is cut from its own hide: slight tone shifts
+    hide_v = g.node("ShaderNodeTexWhiteNoise", {"W": c.attr("hide")}, noise_dimensions="1D").outputs["Value"]
+    hide_k = g.add(0.90, g.mul(hide_v, 0.2))
+    hide_tint = g.node("ShaderNodeCombineColor", {"Red": g.mul(hide_k, 1.02), "Green": hide_k,
+                                                  "Blue": g.mul(hide_k, 0.97)}).outputs["Color"]
     burnish = g.remap(ed, 0.0, 0.0035, 1.0, 0.0)               # dark, glossy cut edges
     rim_wear = g.mul(g.remap(ed, 0.0, 0.007, 1.0, 0.0), aaa.weathering.breakup(c, 40.0, 0.4, 0.62))
 
@@ -1064,7 +1225,7 @@ def jerkin_layers(c):
         col = srgb(color)
         dark = tuple(v * 0.45 for v in col[:3]) + (1.0,)
         light = tuple(min(1.0, v * 2.0) for v in col[:3]) + (1.0,)
-        base = s.base
+        base = g.tint(s.base, hide_tint)
         if side_dark:
             base = g.mix_color(base, tuple(v * 0.6 for v in col[:3]) + (1.0,), g.mul(side_panel, 0.7))
         base = g.mix_color(base, light, g.mul(rim_wear, 0.5))
@@ -1106,6 +1267,13 @@ def jerkin_layers(c):
     # ---- quilted wool gambeson and riveted mail (2D pattern coords from the build) ---------
     cloth = L.wool(c, color=WOOL, quilted=True, channel=0.026, channel_axis="X", P2=pc_vec, wear=0.4, dirt=0.55)
     mail = L.chainmail(c, ring=0.0085, rust=0.45, dirt=0.55, oxide=0.7, P2=pc_vec)
+    # a border of brass rings along every mail edge (as on surviving hauberks)
+    brass = g.mul(g.math("LESS_THAN", ed, 0.0075), g.smooth(mail.height, 0.3, 0.5))
+    tarnish = g.mul(aaa.weathering.breakup(c, 60.0, 0.35, 0.65), brass)      # aged, not polished
+    brass_col = g.mix_color(srgb("#bf9f5e"), srgb("#8e7a4c"), tarnish)
+    mail = aaa.engine.Surface(g.mix_color(mail.base, brass_col, brass),
+                              g.mix_float(mail.rough, g.mix_float(0.38, 0.55, tarnish), brass),
+                              g.maxf(mail.metal, brass), mail.height, mail.bump)
 
     return [(None, main), (is_strap, strap), (is_bracer, bracer),
             (c.is_value(part, STEEL), steel), (c.is_value(part, CLOTH), cloth), (c.is_value(part, MAIL), mail)]
@@ -1124,15 +1292,76 @@ def skin(body, obj):
     ck.apply_weights(body, obj, W)
 
 
-def unwrap(obj):
+def uv_islands(bm, uv):
+    """Faces grouped into UV islands (faces joined by an edge with matching UVs)."""
+    parent = list(range(len(bm.faces)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    bm.faces.index_update()
+    for e in bm.edges:
+        if len(e.link_loops) != 2:
+            continue
+        la, lb = e.link_loops
+        if ((la[uv].uv - lb.link_loop_next[uv].uv).length < 1e-6 and
+                (la.link_loop_next[uv].uv - lb[uv].uv).length < 1e-6):
+            parent[find(la.face.index)] = find(lb.face.index)
+    groups = {}
+    for f in bm.faces:
+        groups.setdefault(find(f.index), []).append(f)
+    return list(groups.values())
+
+
+def unwrap(obj, game=False, res=4096):
+    """Smart UV project. For the game mesh, islands on the hidden inside of thick
+    pieces get less texture space, islands are packed tightly, and the texel
+    density of the outer surfaces is reported."""
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.002)
-    bpy.ops.uv.pack_islands(rotate=True, rotate_method="AXIS_ALIGNED", margin=0.002)
     bpy.ops.object.mode_set(mode="OBJECT")
+    if game:
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        inner = bm.faces.layers.float.get("inner")
+        for island in uv_islands(bm, uv):
+            if sum(f[inner] for f in island) > 0.5 * len(island):
+                loops = [l for f in island for l in f.loops]
+                cen = sum((l[uv].uv for l in loops), Vector((0, 0))) / len(loops)
+                for l in loops:
+                    l[uv].uv = cen + (l[uv].uv - cen) * 0.45
+        bm.to_mesh(obj.data)
+        bm.free()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    try:
+        bpy.ops.uv.pack_islands(rotate=True, rotate_method="ANY", scale=True, margin_method="SCALED",
+                                margin=0.0015, shape_method="CONCAVE")
+    except TypeError:
+        bpy.ops.uv.pack_islands(rotate=True, rotate_method="AXIS_ALIGNED", margin=0.002)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    if game:
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        uv = bm.loops.layers.uv.active
+        inner = bm.faces.layers.float.get("inner")
+        area3d = area_uv = 0.0
+        for f in bm.faces:
+            if f[inner] < 0.5:
+                area3d += f.calc_area()
+                pts = [l[uv].uv for l in f.loops]
+                area_uv += abs(sum(pts[i].x * pts[i - 1].y - pts[i - 1].x * pts[i].y for i in range(len(pts)))) / 2
+        bm.free()
+        density = math.sqrt(area_uv * res * res / (area3d * 1e4))
+        print(f"UVs: outer surfaces at {density:.1f} px/cm with a {res} map")
 
 
 def render_previews(body_fbx):
@@ -1180,21 +1409,31 @@ def main():
     ap.add_argument("--render", action="store_true")
     args, _ = ap.parse_known_args(sys.argv[1:])
     body = ck.Body(args.body)
-    pieces = build_all(body)
-    obj = pieces_to_object(pieces, ASSET_NAME)
-    print(f"{ASSET_NAME}: {len(obj.data.vertices)} verts, {len(obj.data.polygons)} faces")
+    print("Building the game mesh (low)...")
+    obj = pieces_to_object(build_all(body, high=False), ASSET_NAME)
+    high = None
+    if args.export:
+        print("Building the bake source (high)...")
+        high = pieces_to_object(build_all(body, high=True), ASSET_NAME + "_High")
+    for o in (high, obj):
+        if o is not None:
+            tris = sum(len(f.vertices) - 2 for f in o.data.polygons)
+            print(f"{o.name}: {len(o.data.vertices)} verts, {tris} tris")
     if args.export:
         print("Skinning...")
         skin(body, obj)
         print("Unwrapping...")
-        unwrap(obj)
+        unwrap(high)
+        unwrap(obj, game=True, res=args.res)
         tex_dir = OUT_DIR / "Textures"
         if not args.no_bake or not (tex_dir / "T_LeatherJerkin_BaseColor.png").exists():
-            # 2.5 cm contact shadows: enough for straps and folds, without the
-            # hidden inner layers of the garment going black
-            aaa.engine.bake(obj, tex_dir, "LeatherJerkin", jerkin_layers, res=args.res,
-                            ao_distance=0.025, export_height=False)
+            # High-to-low: the material and the folds of the subdivided bake source are
+            # projected onto the game mesh. 2.5 cm contact shadows: enough for straps
+            # and folds, without the hidden inner layers going black.
+            aaa.engine.bake(high, tex_dir, "LeatherJerkin", jerkin_layers, res=args.res,
+                            ao_distance=0.025, export_height=False, low=obj, ray=0.008)
         aaa.engine.assign_baked_material(obj, tex_dir, "LeatherJerkin")
+        bpy.data.objects.remove(high)
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         bpy.ops.wm.save_as_mainfile(filepath=str(OUT_DIR / f"{ASSET_NAME}.blend"), compress=True)
         ck.export_skeletal(body, obj, OUT_DIR / f"{ASSET_NAME}.fbx")
